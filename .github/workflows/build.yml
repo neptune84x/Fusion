@@ -25,6 +25,7 @@ jobs:
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg_bundle.zip
           unzip -o ffmpeg_bundle.zip
           find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
+          # İzinleri burada kesinleştiriyoruz
           chmod +x ffmpeg
           ./ffmpeg -version
 
@@ -35,6 +36,27 @@ jobs:
           sips -z 512 512 icon.png --out Fusion.iconset/icon_512x512.png
           sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
           iconutil -c icns Fusion.iconset
+
+      - name: Build Fusion App
+        run: |
+          # FFmpeg binary dosyasının executable yetkisini koruyarak paketle
+          pyinstaller --windowed --onefile \
+            --add-binary "ffmpeg:." \
+            --icon "Fusion.icns" \
+            --name "Fusion" \
+            main.py
+
+      - name: Zip App Bundle
+        run: |
+          cd dist
+          # -y sembolik linkleri ve izinleri korur
+          zip -r -y ../Fusion_macOS_Silicon.zip Fusion.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fusion-App-Silicon
+          path: Fusion_macOS_Silicon.zip          iconutil -c icns Fusion.iconset
 
       - name: Build Fusion App
         run: |
