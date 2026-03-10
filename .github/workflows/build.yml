@@ -1,4 +1,4 @@
-name: Build Fusion macOS App
+name: Build Fusion macOS App with Icon
 on: [push, workflow_dispatch]
 
 jobs:
@@ -22,10 +22,32 @@ jobs:
           unzip ffmpeg.zip
           chmod +x ffmpeg
 
+      - name: Create macOS Iconset from PNG
+        run: |
+          # PNG'yi macOS .icns formatına çevirmek için klasör yapısını kur
+          mkdir Fusion.iconset
+          # Farklı boyutlarda ikonları oluştur (sips macOS'ta yerleşik bir araçtır)
+          sips -z 16 16     icon.png --out Fusion.iconset/icon_16x16.png
+          sips -z 32 32     icon.png --out Fusion.iconset/icon_16x16@2x.png
+          sips -z 32 32     icon.png --out Fusion.iconset/icon_32x32.png
+          sips -z 64 64     icon.png --out Fusion.iconset/icon_32x32@2x.png
+          sips -z 128 128   icon.png --out Fusion.iconset/icon_128x128.png
+          sips -z 256 256   icon.png --out Fusion.iconset/icon_128x128@2x.png
+          sips -z 256 256   icon.png --out Fusion.iconset/icon_256x256.png
+          sips -z 512 512   icon.png --out Fusion.iconset/icon_256x256@2x.png
+          sips -z 512 512   icon.png --out Fusion.iconset/icon_512x512.png
+          cp icon.png Fusion.iconset/icon_512x512@2x.png
+          
+          # .iconset klasörünü nihai .icns dosyasına çevir
+          iconutil -c icns Fusion.iconset
+          # Oluşan Fusion.icns artık ana dizinde.
+
       - name: Build Fusion App with PyInstaller
         run: |
+          # --icon parametresi ile oluşturduğumuz .icns dosyasını ekliyoruz
           pyinstaller --windowed --onefile \
             --add-binary "ffmpeg:." \
+            --icon "Fusion.icns" \
             --name "Fusion" \
             main.py
 
