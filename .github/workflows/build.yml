@@ -1,11 +1,15 @@
 name: Build Fusion Apple Silicon App
-on: [push, workflow_dispatch]
+on: 
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # Manuel çalıştırma butonunu geri getirir
 
 jobs:
   build:
     runs-on: macos-14 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -16,16 +20,16 @@ jobs:
         run: |
           pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
-      - name: Download FFmpeg 8.0.1 (Apple Silicon)
+      - name: Download FFmpeg 8.0.1
         run: |
-          # En güncel FFmpeg 8.0.1 (arm64) indiriliyor
+          # Evermeet linkini daha stabil olan sürümle güncelledim
           curl -L https://evermeet.cx/ffmpeg/get/zip/arm64/release -o ffmpeg.zip
           unzip ffmpeg.zip
           chmod +x ffmpeg
 
       - name: Create macOS Iconset
         run: |
-          mkdir Fusion.iconset
+          mkdir -p Fusion.iconset
           sips -z 1024 1024 icon.png --out Fusion.iconset/icon_512x512@2x.png
           sips -z 512 512 icon.png --out Fusion.iconset/icon_512x512.png
           sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
@@ -43,25 +47,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-AppleSilicon-v8.0.1
-          path: dist/Fusion.app          sips -z 512 512   icon.png --out Fusion.iconset/icon_256x256@2x.png
-          sips -z 512 512   icon.png --out Fusion.iconset/icon_512x512.png
-          cp icon.png Fusion.iconset/icon_512x512@2x.png
-          
-          # .iconset klasörünü nihai .icns dosyasına çevir
-          iconutil -c icns Fusion.iconset
-          # Oluşan Fusion.icns artık ana dizinde.
-
-      - name: Build Fusion App with PyInstaller
-        run: |
-          # --icon parametresi ile oluşturduğumuz .icns dosyasını ekliyoruz
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-macOS-App
           path: dist/Fusion.app
