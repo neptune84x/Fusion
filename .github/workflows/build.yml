@@ -1,81 +1,40 @@
-name: Build
-on: [push, workflow_dispatch]
+name: Build Fusion Mac
+on: [push]
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.13'
-      
-      - name: Dependencies
+          python-version: '3.10'
+
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install PyQt6 pyinstaller
 
-      - name: FFmpeg
+      - name: Download FFmpeg and FFprobe
         run: |
-          curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o f.zip
-          unzip -o f.zip
-          find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
-          chmod +x ffmpeg
+          # FFmpeg (Senin verdiğin link)
+          curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
+          unzip ffmpeg.zip
+          # FFprobe (Senin verdiğin yeni link)
+          curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
+          unzip ffprobe.zip
+          chmod +x ffmpeg ffprobe
 
-      - name: Icon
+      - name: Build with PyInstaller
         run: |
-          mkdir -p F.iconset
-          sips -s format png icon.png --resampleHeightWidth 1024 1024 --out F.iconset/icon_512x512@2x.png
-          sips -s format png icon.png --resampleHeightWidth 512 512 --out F.iconset/icon_512x512.png
-          iconutil -c icns F.iconset
-
-      - name: PyInstaller
-        run: |
-          rm -rf build dist *.spec
-          pyinstaller --windowed --noconfirm \
+          python -m PyInstaller --noconfirm --onefile --windowed \
             --add-binary "ffmpeg:." \
-            --icon "F.icns" \
-            --name "Fusion" \
-            --hidden-import "PyQt6.sip" \
-            --hidden-import "pkgutil" \
-            --collect-submodules "PyQt6" \
+            --add-binary "ffprobe:." \
             main.py
 
-      - name: Finalize
-        run: |
-          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-          cd dist && zip -r -y ../Fusion.zip Fusion.app
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: Fusion-v2
-          path: Fusion.zip          iconutil -c icns F.iconset
-
-      - name: PyInstaller Advanced Build
-        run: |
-          rm -rf build dist *.spec
-          # --collect-all yerine sadece gerekli olanları alarak kütüphane çakışmasını (Symbol Error) önlüyoruz
-          pyinstaller --windowed --noconfirm \
-            --add-binary "ffmpeg:." \
-            --icon "F.icns" \
-            --name "Fusion" \
-            --hidden-import "PyQt6.sip" \
-            --hidden-import "pkgutil" \
-            --collect-submodules "PyQt6" \
-            main.py
-
-      - name: Post-Build Hardening
-        run: |
-          # Uygulama içindeki tüm binary'lere imza ve yetki onarımı yapıyoruz
-          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-          # ZIP işlemi (Sembolik bağları koruyarak)
-          cd dist && zip -r -y ../Fusion_NextGen.zip Fusion.app
-
-      - name: Upload Fusion Bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-v2026
-          path: Fusion_NextGen.zip
+          name: Fusion-App
+          path: dist/main.app
