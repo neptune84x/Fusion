@@ -1,12 +1,12 @@
 name: Build Fusion Apple Silicon App
-on: 
+on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-14 
+    runs-on: macos-14
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -22,23 +22,14 @@ jobs:
 
       - name: Download and Extract FFmpeg 8.0.1
         run: |
-          # Sağladığın direkt bağlantı üzerinden Apple Silicon FFmpeg indiriliyor
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg_bundle.zip
-          
-          # Zip dosyasını aç
           unzip -o ffmpeg_bundle.zip
-          
-          # İndirilen pakette ffmpeg genellikle bir klasör içinde olabilir, ana dizine taşıyalım
-          # Eğer direkt içindeyse bu komut hata vermez
           find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
-          
-          # Çalıştırma izni ver ve versiyonu kontrol et
           chmod +x ffmpeg
           ./ffmpeg -version
 
       - name: Create macOS Iconset
         run: |
-          # PNG logonu macOS ikon formatına çevirir
           mkdir -p Fusion.iconset
           sips -z 1024 1024 icon.png --out Fusion.iconset/icon_512x512@2x.png
           sips -z 512 512 icon.png --out Fusion.iconset/icon_512x512.png
@@ -47,7 +38,6 @@ jobs:
 
       - name: Build Fusion App
         run: |
-          # PyInstaller ile tüm bağımlılıkları ve FFmpeg'i paketler
           pyinstaller --windowed --onefile \
             --add-binary "ffmpeg:." \
             --icon "Fusion.icns" \
@@ -58,28 +48,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-AppleSilicon-v8.0.1
-          path: dist/Fusion.app          
-          # 5. Dosyanın doğru yerde olduğunu teyit et
-          ./ffmpeg -version
-
-      - name: Create macOS Iconset
-        run: |
-          mkdir -p Fusion.iconset
-          sips -z 1024 1024 icon.png --out Fusion.iconset/icon_512x512@2x.png
-          sips -z 512 512 icon.png --out Fusion.iconset/icon_512x512.png
-          sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
-
-      - name: Build Fusion App
-        run: |
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-AppleSilicon-v1.0
           path: dist/Fusion.app
