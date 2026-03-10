@@ -1,5 +1,5 @@
-name: Build macOS App
-on: [push, workflow_dispatch] # Hem push yapınca hem de manuel çalışır
+name: Build Fusion macOS App
+on: [push, workflow_dispatch]
 
 jobs:
   build:
@@ -14,25 +14,23 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
+          pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
       - name: Download FFmpeg Static Binary
         run: |
-          # macOS için static FFmpeg indiriyoruz
           curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.1.zip -o ffmpeg.zip
           unzip ffmpeg.zip
           chmod +x ffmpeg
 
-      - name: Build App with PyInstaller
+      - name: Build Fusion App with PyInstaller
         run: |
-          # FFmpeg'i uygulamanın içine gömüyoruz
           pyinstaller --windowed --onefile \
             --add-binary "ffmpeg:." \
-            --name "VideoCleaner" \
+            --name "Fusion" \
             main.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VideoCleaner-macOS
-          path: dist/VideoCleaner.app
+          name: Fusion-macOS-App
+          path: dist/Fusion.app
