@@ -31,10 +31,32 @@ jobs:
           mkdir -p Fusion.iconset
           sips -s format png icon.png --resampleHeightWidth 1024 1024 --out Fusion.iconset/icon_512x512@2x.png
           sips -s format png icon.png --resampleHeightWidth 512 512 --out Fusion.iconset/icon_512x512.png
-          sips -s format png icon.png --resampleHeightWidth 256 256 --out Fusion.iconset/icon_256x256.png
+          sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
           iconutil -c icns Fusion.iconset
 
       - name: PyInstaller
+        run: |
+          pyinstaller --windowed --onefile \
+            --add-binary "ffmpeg:." \
+            --icon "Fusion.icns" \
+            --name "Fusion" \
+            main.py
+
+      - name: Perms
+        run: |
+          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
+          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
+
+      - name: Zip
+        run: |
+          cd dist
+          zip -r -y ../Fusion_Silicon.zip Fusion.app
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fusion-Silicon-v1
+          path: Fusion_Silicon.zip      - name: PyInstaller
         run: |
           pyinstaller --windowed --onefile \
             --add-binary "ffmpeg:." \
