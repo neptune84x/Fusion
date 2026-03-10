@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Queue"); self.resize(700, 600); self.setAcceptDrops(True)
         main_layout = QVBoxLayout(); main_layout.setContentsMargins(0, 0, 0, 0); main_layout.setSpacing(0)
         
-        # Subler Toolbar
+        # Toolbar
         toolbar = QWidget(); toolbar.setFixedHeight(110); toolbar.setStyleSheet("background: white; border-bottom: 1px solid #dcdcdc;")
         t_layout = QHBoxLayout(toolbar); t_layout.setContentsMargins(30, 0, 30, 0); t_layout.setSpacing(40)
         
@@ -113,7 +113,8 @@ class MainWindow(QMainWindow):
         f_layout = QHBoxLayout(footer); f_layout.setContentsMargins(20, 0, 20, 0)
         self.status_label = QLabel("0 items in queue."); self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(240); self.progress_bar.setFixedHeight(8); self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { background: #e0e0e0; border-radius: 4px; } QProgressBar::chunk { background: #007aff; border-radius: 4px; }")
+        # HATA DÜZELTME: setFrameShape kaldırıldı, stil ile çözüldü
+        self.progress_bar.setStyleSheet("QProgressBar { background: #e0e0e0; border-radius: 4px; border: none; } QProgressBar::chunk { background: #007aff; border-radius: 4px; }")
         f_layout.addWidget(self.status_label); f_layout.addStretch(); f_layout.addWidget(self.progress_bar)
 
         main_layout.addWidget(toolbar); main_layout.addWidget(self.scroll); main_layout.addWidget(footer)
@@ -157,4 +158,7 @@ class MainWindow(QMainWindow):
         files = [u.toLocalFile() for u in e.mimeData().urls()]; self.add_to_queue(files)
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv); app.setStyle("macintosh"); window = MainWindow(); window.show(); sys.exit(app.exec())
+    app = QApplication(sys.argv)
+    # HATA DÜZELTME: macintosh -> macos
+    app.setStyle("macos")
+    window = MainWindow(); window.show(); sys.exit(app.exec())
