@@ -5,8 +5,7 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -14,20 +13,22 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install PyQt6 pyinstaller
+        run: pip install PyQt6 pyinstaller
 
       - name: Download FFmpeg and FFprobe
         run: |
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
-          unzip ffmpeg.zip
+          unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
-          unzip ffprobe.zip
+          unzip -o ffprobe.zip
           chmod +x ffmpeg ffprobe
 
       - name: Build with PyInstaller
         run: |
+          # Boyutu küçültmek için gereksiz cache'i siliyoruz
+          rm -rf build dist
           python -m PyInstaller --noconfirm --onedir --windowed \
+            --contents-directory "internal" \
             --add-binary "ffmpeg:." \
             --add-binary "ffprobe:." \
             --name "Fusion" \
@@ -36,10 +37,11 @@ jobs:
       - name: Compress App Bundle
         run: |
           cd dist
-          zip -r ../Fusion_Mac.zip Fusion.app
+          # Sadece .app paketini ziple, gereksiz dosyaları dışarıda bırak
+          zip -y -r ../Fusion_Mac.zip Fusion.app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-Final-Package
+          name: Fusion-App
           path: Fusion_Mac.zip
