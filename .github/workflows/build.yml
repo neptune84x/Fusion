@@ -42,27 +42,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-Final-Package
-          path: Fusion_Mac.zip          cd dist
-          zip -r ../Fusion_Mac.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-Final-Package
-          path: Fusion_Mac.zip        run: |
-          # dist klasörü içindeki .app dosyasını bütünlüğü bozmadan ziple
-          cd dist
-          zip -r ../Fusion_Mac.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-Final-Package
-          path: Fusion_Mac.zip          cd dist
-          zip -r ../Fusion_Mac.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-Final-Package
           path: Fusion_Mac.zip
