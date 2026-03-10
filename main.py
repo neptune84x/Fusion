@@ -4,7 +4,7 @@ import subprocess
 
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
-                                 QWidget, QLabel, QProgressBar, QTextEdit, 
+                                 QWidget, QLabel, QProgressBar, 
                                  QScrollArea, QFrame)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal
 except ImportError:
@@ -12,8 +12,7 @@ except ImportError:
 
 class ConversionThread(QThread):
     file_progress = pyqtSignal(int)
-    log_signal = pyqtSignal(str)
-    finished_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(str, object)
 
     def __init__(self, input_file):
         super().__init__()
@@ -28,28 +27,26 @@ class ConversionThread(QThread):
         base_name = os.path.splitext(os.path.basename(self.input_file))[0]
         output_file = os.path.join(os.path.dirname(self.input_file), f"{base_name}_Fusion.mkv")
         
-        cmd = [ffmpeg_path, '-i', self.input_file, '-c', 'copy', '-y', output_file]
+        cmd = [ffmpeg_path, '-i', self.input_file, '-c:v', 'copy', '-c:a', 'copy', '-y', output_file]
         
         try:
-            self.file_progress.emit(20)
-            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
+            self.file_progress.emit(25)
+            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True)
             process.wait()
             self.file_progress.emit(100)
-            if process.returncode == 0:
-                self.finished_signal.emit(f"Done: {os.path.basename(output_file)}")
-            else:
-                self.finished_signal.emit(f"Error: {os.path.basename(self.input_file)}")
-        except Exception as e:
-            self.finished_signal.emit(f"Failed: {str(e)}")
+            self.finished_signal.emit(output_file, self)
+        except Exception:
+            self.finished_signal.emit("error", self)
 
 class FileWidget(QFrame):
     def __init__(self, filename):
         super().__init__()
         self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet("QFrame { background-color: #2b2b2b; border-radius: 5px; margin: 2px; } QLabel { color: #eee; }")
         layout = QVBoxLayout()
         self.label = QLabel(filename)
         self.pbar = QProgressBar()
-        self.pbar.setRange(0, 100)
+        self.pbar.setStyleSheet("QProgressBar { border: 1px solid grey; border-radius: 5px; text-align: center; } QProgressBar::chunk { background-color: #05B8CC; }")
         layout.addWidget(self.label)
         layout.addWidget(self.pbar)
         self.setLayout(layout)
@@ -61,7 +58,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fusion v2.0")
-        self.setMinimumSize(750, 500)
+        self.resize(750, 500)
         self.setAcceptDrops(True)
         
         self.central_widget = QWidget()
@@ -70,39 +67,42 @@ class MainWindow(QMainWindow):
 
         self.drop_label = QLabel("Drag and Drop Video Files Here")
         self.drop_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.drop_label.setStyleSheet("border: 2px dashed #555; border-radius: 10px; padding: 20px; font-size: 18px;")
+        self.drop_label.setMinimumHeight(150)
+        self.drop_label.setStyleSheet("border: 2px dashed #666; border-radius: 12px; color: #888; font-size: 20px; background: #1e1e1e;")
         
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self.list_container = QWidget()
         self.list_layout = QVBoxLayout(self.list_container)
         self.list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.list_container)
 
-        self.total_label = QLabel("Total Progress:")
         self.total_pbar = QProgressBar()
+        self.total_pbar.setFormat("Total Progress: %p%")
+        self.total_pbar.setFixedHeight(25)
         
         self.main_layout.addWidget(self.drop_label)
         self.main_layout.addWidget(self.scroll)
-        self.main_layout.addWidget(self.total_label)
         self.main_layout.addWidget(self.total_pbar)
 
-        self.active_threads = 0
-        self.completed_threads = 0
-        self.total_files = 0
+        self.threads = []
+        self.completed_count = 0
+        self.total_count = 0
 
     def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls(): e.accept()
+        if e.mimeData().hasUrls():
+            e.accept()
 
     def dropEvent(self, e):
-        urls = e.mimeData().urls()
-        self.total_files += len(urls)
-        self.update_total_bar()
+        files = [u.toLocalFile() for u in e.mimeData().urls() if os.path.isfile(u.toLocalFile())]
+        if not files: return
 
-        for url in urls:
-            path = url.toLocalFile()
-            if os.path.isfile(path):
-                self.start_conversion(path)
+        self.total_count += len(files)
+        self.update_total_status()
+
+        for path in files:
+            self.start_conversion(path)
 
     def start_conversion(self, path):
         item = FileWidget(os.path.basename(path))
@@ -110,18 +110,20 @@ class MainWindow(QMainWindow):
         
         thread = ConversionThread(path)
         thread.file_progress.connect(item.update_progress)
-        thread.finished_signal.connect(lambda msg: self.on_file_finished(msg))
+        thread.finished_signal.connect(self.on_finished)
         
-        self.active_threads += 1
+        self.threads.append(thread)
         thread.start()
 
-    def on_file_finished(self, msg):
-        self.completed_threads += 1
-        self.update_total_bar()
+    def on_finished(self, result, thread_obj):
+        self.completed_count += 1
+        self.update_total_status()
+        if thread_obj in self.threads:
+            self.threads.remove(thread_obj)
 
-    def update_total_bar(self):
-        if self.total_files > 0:
-            val = int((self.completed_threads / self.total_files) * 100)
+    def update_total_status(self):
+        if self.total_count > 0:
+            val = int((self.completed_count / self.total_count) * 100)
             self.total_pbar.setValue(val)
 
 if __name__ == "__main__":
