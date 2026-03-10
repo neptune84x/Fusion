@@ -1,12 +1,12 @@
 name: Build Fusion Apple Silicon App
-on:
+on: 
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-14 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -44,8 +44,14 @@ jobs:
             --name "Fusion" \
             main.py
 
+      - name: Zip App Bundle
+        run: |
+          # Sadece Contents değil, tüm .app klasörünü düzgünce zipleyelim
+          cd dist
+          zip -r ../Fusion_macOS_Silicon.zip Fusion.app
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-AppleSilicon-v8.0.1
-          path: dist/Fusion.app
+          name: Fusion-App-Silicon
+          path: Fusion_macOS_Silicon.zip
