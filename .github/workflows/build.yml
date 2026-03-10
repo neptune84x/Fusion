@@ -26,7 +26,6 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          # --onedir kullanımı hem hızlı açılış sağlar hem macOS güvenliğine uygundur
           python -m PyInstaller --noconfirm --onedir --windowed \
             --add-binary "ffmpeg:." \
             --add-binary "ffprobe:." \
@@ -35,6 +34,14 @@ jobs:
 
       - name: Compress App Bundle
         run: |
+          cd dist
+          zip -r ../Fusion_Mac.zip Fusion.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fusion-Final-Package
+          path: Fusion_Mac.zip        run: |
           # dist klasörü içindeki .app dosyasını bütünlüğü bozmadan ziple
           cd dist
           zip -r ../Fusion_Mac.zip Fusion.app
