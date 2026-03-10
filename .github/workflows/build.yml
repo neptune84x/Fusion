@@ -35,23 +35,26 @@ jobs:
 
       - name: PyInstaller Build
         run: |
-          # pkgutil hatasını ve PyQt6 eksiklerini gidermek için tüm flagler eklendi
-          pyinstaller --windowed --onefile \
+          # --windowed kalsın ama --onefile yerine --onedir (default) kullanıyoruz
+          # Bu sayede extraction (dosya çıkarma) hatası yaşanmaz.
+          pyinstaller --windowed \
             --add-binary "ffmpeg:." \
             --icon "F.icns" \
             --name "Fusion" \
             --hidden-import "pkgutil" \
-            --collect-all "PyQt6" \
             main.py
 
       - name: Fix Permissions and Zip
         run: |
-          # Uygulama içindeki ana dosyaya çalışma izni ver
+          # Uygulama paketinin içindeki ana binary'ye izin ver
           chmod +x dist/Fusion.app/Contents/MacOS/Fusion
+          # Uygulamanın yanındaki ffmpeg'e izin ver
+          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
+          # Tüm paketi zipleyelim
           cd dist && zip -r -y ../Fusion_Silicon.zip Fusion.app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-Silicon-v1
+          name: Fusion-Silicon-Final
           path: Fusion_Silicon.zip
