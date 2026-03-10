@@ -1,9 +1,9 @@
-name: Build Fusion macOS App with Icon
+name: Build Fusion Apple Silicon App
 on: [push, workflow_dispatch]
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-14 
     steps:
       - uses: actions/checkout@v4
 
@@ -16,25 +16,34 @@ jobs:
         run: |
           pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
-      - name: Download FFmpeg Static Binary
+      - name: Download FFmpeg 8.0.1 (Apple Silicon)
         run: |
-          curl -L https://evermeet.cx/ffmpeg/ffmpeg-6.1.1.zip -o ffmpeg.zip
+          # En güncel FFmpeg 8.0.1 (arm64) indiriliyor
+          curl -L https://evermeet.cx/ffmpeg/get/zip/arm64/release -o ffmpeg.zip
           unzip ffmpeg.zip
           chmod +x ffmpeg
 
-      - name: Create macOS Iconset from PNG
+      - name: Create macOS Iconset
         run: |
-          # PNG'yi macOS .icns formatına çevirmek için klasör yapısını kur
           mkdir Fusion.iconset
-          # Farklı boyutlarda ikonları oluştur (sips macOS'ta yerleşik bir araçtır)
-          sips -z 16 16     icon.png --out Fusion.iconset/icon_16x16.png
-          sips -z 32 32     icon.png --out Fusion.iconset/icon_16x16@2x.png
-          sips -z 32 32     icon.png --out Fusion.iconset/icon_32x32.png
-          sips -z 64 64     icon.png --out Fusion.iconset/icon_32x32@2x.png
-          sips -z 128 128   icon.png --out Fusion.iconset/icon_128x128.png
-          sips -z 256 256   icon.png --out Fusion.iconset/icon_128x128@2x.png
-          sips -z 256 256   icon.png --out Fusion.iconset/icon_256x256.png
-          sips -z 512 512   icon.png --out Fusion.iconset/icon_256x256@2x.png
+          sips -z 1024 1024 icon.png --out Fusion.iconset/icon_512x512@2x.png
+          sips -z 512 512 icon.png --out Fusion.iconset/icon_512x512.png
+          sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
+          iconutil -c icns Fusion.iconset
+
+      - name: Build Fusion App
+        run: |
+          pyinstaller --windowed --onefile \
+            --add-binary "ffmpeg:." \
+            --icon "Fusion.icns" \
+            --name "Fusion" \
+            main.py
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fusion-AppleSilicon-v8.0.1
+          path: dist/Fusion.app          sips -z 512 512   icon.png --out Fusion.iconset/icon_256x256@2x.png
           sips -z 512 512   icon.png --out Fusion.iconset/icon_512x512.png
           cp icon.png Fusion.iconset/icon_512x512@2x.png
           
