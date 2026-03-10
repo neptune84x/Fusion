@@ -9,7 +9,7 @@ try:
                                  QWidget, QLabel, QProgressBar, QScrollArea, 
                                  QFrame, QPushButton, QFileDialog)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal
-    from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+    from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
 except ImportError:
     sys.exit(1)
 
@@ -26,30 +26,36 @@ class ConversionThread(QThread):
         base_path = os.path.splitext(self.input_file)[0]
         output_file = f"{base_path}_Fusion.mkv"
         
+        # Ek altyazıları tara
         subs = glob.glob(f"{base_path}*.*")
         ext_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass')) and s != self.input_file]
 
+        # Komut Başlangıcı
         cmd = [ffmpeg_path, '-i', self.input_file]
         for sub in ext_subs:
             cmd.extend(['-i', sub])
 
-        # KRİTİK: Dil kodlarını ve track verilerini korumak için 
-        # map_metadata 0 kullanıyoruz, global tagleri temizliyoruz.
-        cmd.extend([
-            '-map', '0',               
-            '-map_metadata', '0',      
-            '-map_metadata:g', '-1',   
-            '-map_chapters', '0'       
-        ])
+        # MAP: Video, Ses ve Kaynak Altyazıları Olduğu Gibi Al
+        cmd.extend(['-map', '0:v', '-map', '0:a?', '-map', '0:s?'])
+        
+        # Metadata: Kaynaktaki tüm track dillerini koru, global title'ı sil
+        cmd.extend(['-map_metadata', '0', '-map_metadata:g', '-1', '-map_chapters', '0'])
 
-        # Dış altyazıları ekle ve dil kodlarını ata
+        # DIŞ ALTYAZI DİL ATAMASI (KARIŞIKLIĞI ÖNLEME):
+        # Kaynaktaki altyazıların üzerine yazmamak için indisleri doğru yönetiyoruz.
         for i, sub_path in enumerate(ext_subs):
-            cmd.extend(['-map', str(i + 1)])
+            cmd.extend(['-map', str(i + 1)]) # Dış altyazıyı ekle
+            
+            # Dil yakalama (en, tr, ger...)
             match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', sub_path.lower())
             lang = match.group(1) if match else 'und'
+            
+            # Kaynak dosyadaki altyazıların (0:s) sonrasına, yeni stream'ler olarak metadata ekle
+            # Dış altyazılar FFmpeg'de stream sırasında sona eklenir.
+            # -metadata:s:s:{N} komutuyla N. altyazı kanalına dil atanır.
             cmd.extend([f'-metadata:s:s:{i}', f'language={lang}'])
 
-        # Tüm altyazıları SRT'ye zorla ve diğerlerini kopyala
+        # KODLAMA: Her şeyi kopyala, altyazıları srt yap
         cmd.extend([
             '-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt',
             '-y', output_file
@@ -57,12 +63,11 @@ class ConversionThread(QThread):
         
         try:
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except:
-            pass
+        except: pass
         self.finished_signal.emit(self)
 
 class SublerListWidget(QWidget):
-    """Subler tipi pijama (zebra) deseni"""
+    """Subler tipi gerçek pijama deseni"""
     def paintEvent(self, event):
         painter = QPainter(self)
         row_height = 25
@@ -104,13 +109,15 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Toolbar
+        # --- TOOLBAR (Görseldeki Gibi Büyük İkonlar) ---
         toolbar = QWidget()
-        toolbar.setFixedHeight(100)
+        toolbar.setFixedHeight(110) # Daha yüksek toolbar
         toolbar.setStyleSheet("background: white; border-bottom: 1px solid #C0C0C0;")
         t_layout = QHBoxLayout(toolbar)
-        t_layout.setContentsMargins(20, 10, 20, 10)
+        t_layout.setContentsMargins(25, 10, 25, 10)
+        t_layout.setSpacing(30)
         
+        # İkonları belirgin şekilde büyüttük (24px -> 40px civarı emoji boyutu)
         self.start_btn = self.create_nav_btn("Start", "▶️")
         self.settings_btn = self.create_nav_btn("Settings", "⚙️")
         self.add_btn = self.create_nav_btn("Add Item", "➕")
@@ -120,7 +127,7 @@ class MainWindow(QMainWindow):
         t_layout.addWidget(self.settings_btn)
         t_layout.addWidget(self.add_btn)
 
-        # List
+        # --- LİSTE ---
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -132,11 +139,12 @@ class MainWindow(QMainWindow):
         self.list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.container)
 
-        # Footer
+        # --- FOOTER ---
         footer = QWidget()
         footer.setFixedHeight(55)
         footer.setStyleSheet("background: #F0F0F0; border-top: 1px solid #C0C0C0;")
         f_layout = QHBoxLayout(footer)
+        f_layout.setContentsMargins(15, 0, 15, 0)
         self.status_label = QLabel("0 items in queue.")
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(220)
@@ -156,9 +164,25 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.start_processing)
 
     def create_nav_btn(self, text, icon_char):
-        btn = QPushButton(f"{icon_char}\n\n{text}")
-        btn.setFixedSize(85, 80)
-        btn.setStyleSheet("QPushButton { border: none; font-size: 11px; color: #444; background: transparent; } QPushButton:hover { background-color: #F2F2F2; border-radius: 12px; }")
+        btn = QPushButton()
+        btn.setFixedSize(90, 90) # Buton alanı büyütüldü
+        # Subler stili: İkon ve metni alt alta büyük boyutta göster
+        btn.setText(f"{icon_char}\n\n{text}")
+        btn.setStyleSheet("""
+            QPushButton { 
+                border: none; 
+                font-size: 13px; /* Yazı boyutu büyütüldü */
+                color: #333; 
+                background: transparent; 
+                font-weight: 500;
+                padding: 10px;
+            }
+            QPushButton:hover { background-color: #F5F5F5; border-radius: 15px; }
+        """)
+        # Emojiyi (ikonu) büyütmek için font ayarı
+        font = QFont()
+        font.setPointSize(28) # İkon (emoji) büyüklüğü
+        btn.setFont(font)
         return btn
 
     def open_files(self):
