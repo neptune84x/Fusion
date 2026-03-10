@@ -1,7 +1,7 @@
 import sys
 import os
 import subprocess
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, 
                              QWidget, QLabel, QProgressBar, QTextEdit)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -25,35 +25,40 @@ class ProcessThread(QThread):
         subs = []
         lang_map = {'tr': 'tur', 'en': 'eng', 'de': 'ger', 'fr': 'fra', 'es': 'spa'}
         
-        for f in os.listdir(base_path):
-            if f.startswith(file_name) and f.endswith(('.srt', '.ass', '.vtt')):
-                lang_code = 'und'
-                for suffix, code in lang_map.items():
-                    if f".{suffix}." in f.lower() or f"_{suffix}." in f.lower():
-                        lang_code = code
-                        break
-                subs.append({'file': os.path.join(base_path, f), 'lang': lang_code})
+        try:
+            for f in os.listdir(base_path):
+                if f.startswith(file_name) and f.endswith(('.srt', '.ass', '.vtt')):
+                    lang_code = 'und'
+                    for suffix, code in lang_map.items():
+                        if f".{suffix}." in f.lower() or f"_{suffix}." in f.lower():
+                            lang_code = code
+                            break
+                    subs.append({'file': os.path.join(base_path, f), 'lang': lang_code})
 
-        cmd = [ffmpeg_path, '-i', self.input_file]
-        for s in subs:
-            cmd.extend(['-i', s['file']])
+            cmd = [ffmpeg_path, '-i', self.input_file]
+            for s in subs:
+                cmd.extend(['-i', s['file']])
 
-        cmd.extend(['-map', '0:v', '-map', '0:a', '-map', '0:t?'])
-        for i, s in enumerate(subs):
-            cmd.extend(['-map', str(i+1), f'-c:s:{i}', 'subrip', f'-metadata:s:s:{i}', f'language={s["lang"]}'])
+            cmd.extend(['-map', '0:v', '-map', '0:a', '-map', '0:t?'])
+            
+            for i, s in enumerate(subs):
+                cmd.extend(['-map', str(i+1), f'-c:s:{i}', 'subrip', f'-metadata:s:s:{i}', f'language={s["lang"]}'])
 
-        cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '0', '-metadata', 'title=', 
-                    '-metadata:s:v', 'title=', '-metadata:s:a', 'title=', '-y', output_file])
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '0', '-metadata', 'title=', 
+                        '-metadata:s:v', 'title=', '-metadata:s:a', 'title=', '-y', output_file])
 
-        self.log.emit(f"🚀 İşlem Başladı: {file_name}")
-        process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
+            self.log.emit(f"🚀 Fusion İşlemi Başladı: {file_name}")
+            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
+            
+            for line in process.stderr:
+                if "time=" in line:
+                    self.progress.emit(50) 
+
+            process.wait()
+            self.log.emit(f"✅ Tamamlandı!\n📂 Dosya: {output_file}")
+        except Exception as e:
+            self.log.emit(f"❌ Hata oluştu: {str(e)}")
         
-        for line in process.stderr:
-            if "time=" in line:
-                self.progress.emit(50) 
-
-        process.wait()
-        self.log.emit(f"✅ Tamamlandı!\n📂 Kaydedilen: {output_file}")
         self.finished.emit()
 
 class DropArea(QLabel):
@@ -65,16 +70,17 @@ class DropArea(QLabel):
         self.setAcceptDrops(True)
         self.setStyleSheet("""
             QLabel {
-                border: 2px dashed #555;
-                border-radius: 10px;
-                color: #aaa;
-                background-color: #2b2b2b;
-                font-size: 16px;
+                border: 3px dashed #555;
+                border-radius: 15px;
+                color: #888;
+                background-color: #252525;
+                font-size: 18px;
+                font-weight: bold;
             }
             QLabel:hover {
                 border-color: #ff9500;
                 color: #fff;
-                background-color: #333;
+                background-color: #2b2b2b;
             }
         """)
 
@@ -96,24 +102,23 @@ class DropArea(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Fusion - Drag & Clean")
+        self.setWindowTitle("Fusion - v1.0")
         self.setFixedSize(600, 450)
-        self.setStyleSheet("QMainWindow { background-color: #1e1e1e; }")
+        self.setStyleSheet("QMainWindow { background-color: #1a1a1a; }")
 
         layout = QVBoxLayout()
-        
         self.drop_area = DropArea()
         self.drop_area.fileDropped.connect(self.start_process)
         
         self.progress = QProgressBar()
         self.progress.setStyleSheet("""
-            QProgressBar { border: 1px solid #444; border-radius: 5px; text-align: center; color: white; background: #2b2b2b; }
+            QProgressBar { border: 1px solid #333; border-radius: 5px; text-align: center; color: white; background: #222; }
             QProgressBar::chunk { background-color: #ff9500; }
         """)
         
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setStyleSheet("background-color: #000; color: #00ff00; font-family: 'Courier New'; border: none;")
+        self.log_view.setStyleSheet("background-color: #000; color: #00ff00; font-family: 'Courier New'; font-size: 11px; border: 1px solid #333;")
 
         layout.addWidget(self.drop_area, 2)
         layout.addWidget(self.progress)
@@ -124,8 +129,12 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
     def start_process(self, file_path):
+        if not file_path.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
+            self.log_view.append("⚠️ Hata: Sadece video dosyalarını sürükleyin!")
+            return
+            
         self.drop_area.setEnabled(False)
-        self.drop_area.setText("İşleniyor...")
+        self.drop_area.setText("Fusion İşliyor...")
         self.progress.setRange(0, 0)
         self.thread = ProcessThread(file_path)
         self.thread.log.connect(self.log_view.append)
@@ -135,91 +144,6 @@ class MainWindow(QMainWindow):
     def on_finished(self):
         self.drop_area.setEnabled(True)
         self.drop_area.setText("Videonuzu Buraya Sürükleyin")
-        self.progress.setRange(0, 100)
-        self.progress.setValue(100)
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-        # FFmpeg Komut İnşası
-        cmd = [ffmpeg_path, '-i', self.input_file]
-        for s in subs:
-            cmd.extend(['-i', s['file']])
-
-        cmd.extend(['-map', '0:v', '-map', '0:a', '-map', '0:t?'])
-        
-        for i, s in enumerate(subs):
-            cmd.extend(['-map', str(i+1)])
-            cmd.extend([f'-c:s:{i}', 'subrip'])
-            cmd.extend([f'-metadata:s:s:{i}', f'language={s["lang"]}'])
-
-        cmd.extend([
-            '-c:v', 'copy', '-c:a', 'copy',
-            '-map_metadata', '0',
-            '-metadata', 'title=', 
-            '-metadata:s:v', 'title=', '-metadata:s:a', 'title=',
-            '-y', output_file
-        ])
-
-        self.log.emit(f"Fusion İşlemi Başladı: {file_name}")
-        
-        process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
-        
-        for line in process.stderr:
-            if "time=" in line:
-                self.log.emit("İşleniyor...")
-                self.progress.emit(50) 
-
-        process.wait()
-        self.log.emit(f"İşlem Tamamlandı!\nKaydedilen: {output_file}")
-        self.finished.emit()
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Fusion - Media Tagger & Merger")
-        self.setFixedSize(550, 400)
-
-        layout = QVBoxLayout()
-        self.label = QLabel("Temizlemek ve Altyazı Eklemek İçin Video Seçin")
-        self.label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        self.btn = QPushButton("Video Dosyası Seç")
-        self.btn.setFixedHeight(40)
-        self.btn.clicked.connect(self.open_file)
-        
-        self.progress = QProgressBar()
-        self.log_view = QTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setStyleSheet("background-color: #1e1e1e; color: #00ff00; font-family: monospace;")
-
-        layout.addWidget(self.label)
-        layout.addWidget(self.btn)
-        layout.addWidget(self.progress)
-        layout.addWidget(self.log_view)
-
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
-
-    def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Video Seç", "", "Video Dosyaları (*.mp4 *.mkv *.avi *.mov)")
-        if file_path:
-            self.start_process(file_path)
-
-    def start_process(self, file_path):
-        self.btn.setEnabled(False)
-        self.progress.setRange(0, 0) # Belirsiz ilerleme (Busy indicator)
-        self.thread = ProcessThread(file_path)
-        self.thread.log.connect(self.log_view.append)
-        self.thread.finished.connect(self.on_finished)
-        self.thread.start()
-
-    def on_finished(self):
-        self.btn.setEnabled(True)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
 
