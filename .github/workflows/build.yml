@@ -1,4 +1,4 @@
-name: Build Fusion
+name: Build Fusion NextGen
 on: 
   push:
     branches: [ main, master ]
@@ -6,61 +6,59 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest # Her zaman GitHub'ın en güncel macOS imajını kullanır
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Latest Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.13' # En güncel kararlı sürüm
       
-      - name: Install Dependencies
+      - name: Install Latest Dependencies
         run: |
-          pip install --upgrade pip
-          pip install PyQt6==6.6.1 pyinstaller==6.4.0
+          python -m pip install --upgrade pip
+          pip install --upgrade PyQt6 pyinstaller
 
-      - name: Download FFmpeg 8.0.1
+      - name: Download Latest FFmpeg
         run: |
+          # Apple Silicon için en güncel FFmpeg binary
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ff.zip
           unzip -o ff.zip
           find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
           chmod +x ffmpeg
 
-      - name: Create macOS Icon
+      - name: Create High-Res macOS Icon
         run: |
           mkdir -p F.iconset
           sips -s format png icon.png --resampleHeightWidth 1024 1024 --out F.iconset/icon_512x512@2x.png
           sips -s format png icon.png --resampleHeightWidth 512 512 --out F.iconset/icon_512x512.png
           iconutil -c icns F.iconset
 
-      - name: PyInstaller Build
+      - name: PyInstaller Advanced Build
         run: |
-          # Önceki hatalı kalıntıları temizle
-          rm -rf build dist Fusion.spec
-          
-          # --collect-all yerine daha güvenli olan submodule toplama metoduna geçtik
-          # Bu, QtBluetooth gibi çakışan framework hatalarını engeller.
+          rm -rf build dist *.spec
+          # --collect-all yerine sadece gerekli olanları alarak kütüphane çakışmasını (Symbol Error) önlüyoruz
           pyinstaller --windowed --noconfirm \
             --add-binary "ffmpeg:." \
             --icon "F.icns" \
             --name "Fusion" \
-            --hidden-import "pkgutil" \
             --hidden-import "PyQt6.sip" \
+            --hidden-import "pkgutil" \
             --collect-submodules "PyQt6" \
             main.py
 
-      - name: Fix Permissions and Zip
+      - name: Post-Build Hardening
         run: |
-          # Uygulama paketinin içindeki ana binary'ye izin ver
+          # Uygulama içindeki tüm binary'lere imza ve yetki onarımı yapıyoruz
           chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          # İçerdeki ffmpeg'i bul ve izin ver
           find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-          cd dist && zip -r -y ../Fusion_Silicon.zip Fusion.app
+          # ZIP işlemi (Sembolik bağları koruyarak)
+          cd dist && zip -r -y ../Fusion_NextGen.zip Fusion.app
 
-      - name: Upload Artifact
+      - name: Upload Fusion Bundle
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-Silicon-App
-          path: Fusion_Silicon.zip
+          name: Fusion-v2026
+          path: Fusion_NextGen.zip
