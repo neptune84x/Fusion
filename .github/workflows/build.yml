@@ -5,10 +5,10 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4 # v4'e güncellendi
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # v5'e güncellendi
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -18,23 +18,26 @@ jobs:
 
       - name: Download FFmpeg and FFprobe
         run: |
-          # FFmpeg
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip ffmpeg.zip
-          # FFprobe (Senin verdiğin link)
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip ffprobe.zip
           chmod +x ffmpeg ffprobe
 
       - name: Build with PyInstaller
         run: |
+          # --windowed parametresi macOS'ta .app klasörü oluşturur
+          # Bu klasörü tek bir dosya gibi artifact olarak yüklemek için isimlendirmeyi netleştiriyoruz
           python -m PyInstaller --noconfirm --onefile --windowed \
             --add-binary "ffmpeg:." \
             --add-binary "ffprobe:." \
+            --name "Fusion" \
             main.py
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4 # KRİTİK: v4 sürümü zorunlu
+        uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App-Mac
-          path: dist/main.app
+          name: Fusion-Installer-Mac
+          # KRİTİK DÜZELTME: .app bir klasör olduğu için içeriğini değil, 
+          # klasörün kendisini paketlemesi için sonuna slash eklemiyoruz.
+          path: dist/Fusion.app
