@@ -20,14 +20,23 @@ jobs:
         run: |
           pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
-      - name: Download FFmpeg (Apple Silicon Native)
+      - name: Download and Extract FFmpeg
         run: |
-          # FFmpeg'in resmî GitHub release'inden macOS arm64 sürümünü çekiyoruz
-          curl -L https://github.com/FFmpeg/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-macos-arm64-nonfree.tar.xz -o ffmpeg.tar.xz
-          tar -xf ffmpeg.tar.xz
-          # Çıkarılan klasörün içindeki ffmpeg dosyasını ana dizine taşıyoruz
-          find . -name "ffmpeg" -type f -exec mv {} . \;
+          # 1. FFmpeg'i güvenilir bir statik kaynaktan indiriyoruz (Apple Silicon arm64)
+          # -L (follow redirects) ve --retry ekleyerek bağlantı kopmalarını önlüyoruz
+          curl -L --retry 5 https://evermeet.cx/ffmpeg/get/zip/arm64/release -o ffmpeg.zip
+          
+          # 2. Dosyanın inip inmediğini kontrol et
+          ls -lh ffmpeg.zip
+          
+          # 3. Zip'ten çıkar (Bazen zip yerine 7z gelebilir, bu komut her ikisini de dener)
+          unzip -o ffmpeg.zip || 7z x ffmpeg.zip
+          
+          # 4. Binary dosyasını ana dizine al ve yetkilendir
           chmod +x ffmpeg
+          
+          # 5. Dosyanın doğru yerde olduğunu teyit et
+          ./ffmpeg -version
 
       - name: Create macOS Iconset
         run: |
@@ -39,7 +48,6 @@ jobs:
 
       - name: Build Fusion App
         run: |
-          # PyInstaller ile FFmpeg'i içine gömüp tek bir .app oluşturuyoruz
           pyinstaller --windowed --onefile \
             --add-binary "ffmpeg:." \
             --icon "Fusion.icns" \
