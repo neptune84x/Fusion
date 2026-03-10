@@ -18,18 +18,14 @@ jobs:
 
       - name: Download FFmpeg and FFprobe
         run: |
-          # FFmpeg indir
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip ffmpeg.zip
-          # FFprobe indir
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip ffprobe.zip
           chmod +x ffmpeg ffprobe
 
       - name: Build with PyInstaller
         run: |
-          # --windowed parametresi macOS'ta .app bundle'ı oluşturur
-          # Binary'leri gömüyoruz
           python -m PyInstaller --noconfirm --onefile --windowed \
             --add-binary "ffmpeg:." \
             --add-binary "ffprobe:." \
@@ -38,16 +34,6 @@ jobs:
 
       - name: Compress App Bundle
         run: |
-          # .app klasörünü Mac'in anlayacağı şekilde ve dosya izinlerini bozmadan zipleyelim
-          cd dist
-          zip -r ../Fusion_Mac.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4 # KRİTİK: v4 sürümü zorunlu
-        with:
-          name: Fusion-Final-Package
-          # Doğrudan zip dosyasını yüklüyoruz.
-          path: Fusion_Mac.zip          # .app klasörünü Mac'in anlayacağı şekilde zipleyelim
           cd dist
           zip -r ../Fusion_Mac.zip Fusion.app
 
@@ -55,5 +41,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-Final-Package
-          # Artık doğrudan zip dosyasını yüklüyoruz
-          path: Fusion_Mac.zip
+          path: Fusion_Mac.zip # Bu satırda artık syntax hatası almayacaksın
