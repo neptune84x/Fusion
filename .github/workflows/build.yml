@@ -25,16 +25,51 @@ jobs:
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg_bundle.zip
           unzip -o ffmpeg_bundle.zip
           find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
-          # İzinleri burada kesinleştiriyoruz
           chmod +x ffmpeg
-          ./ffmpeg -version
 
-      - name: Create macOS Iconset
+      - name: Create macOS Iconset (Fixed Transparency)
         run: |
           mkdir -p Fusion.iconset
-          sips -z 1024 1024 icon.png --out Fusion.iconset/icon_512x512@2x.png
-          sips -z 512 512 icon.png --out Fusion.iconset/icon_512x512.png
-          sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
+          # İkonun beyaz arka planlı kalmaması için şeffaflığı zorluyoruz
+          sips -s format png icon.png --resampleHeightWidth 1024 1024 --out Fusion.iconset/icon_512x512@2x.png
+          sips -s format png icon.png --resampleHeightWidth 512 512 --out Fusion.iconset/icon_512x512.png
+          sips -s format png icon.png --resampleHeightWidth 256 256 --out Fusion.iconset/icon_256x256.png
+          iconutil -c icns Fusion.iconset
+
+      - name: Create Entitlements (For App Launch)
+        run: |
+          # Uygulamanın açılmama/çökme sorununu çözmek için izin dosyası
+          echo '<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.disable-library-validation</key>
+              <true/>
+          </dict>
+          </plist>' > entitlements.plist
+
+      - name: Build Fusion App
+        run: |
+          # PyInstaller'a entitlements dosyasını ekleyerek derliyoruz
+          pyinstaller --windowed --onefile \
+            --add-binary "ffmpeg:." \
+            --icon "Fusion.icns" \
+            --name "Fusion" \
+            --codesign-entitlements "entitlements.plist" \
+            main.py
+
+      - name: Zip App Bundle
+        run: |
+          cd dist
+          zip -r -y ../Fusion_macOS_Silicon.zip Fusion.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fusion-App-Silicon
+          path: Fusion_macOS_Silicon.zip          sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
           iconutil -c icns Fusion.iconset
 
       - name: Build Fusion App
