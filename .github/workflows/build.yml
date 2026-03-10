@@ -1,42 +1,57 @@
-name: Build
-on: [push, workflow_dispatch]
+name: Build Fusion
+on: 
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
       
-      - name: Install
+      - name: Install Dependencies
         run: pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
-      - name: FFmpeg
+      - name: Download FFmpeg 8.0.1
         run: |
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ff.zip
           unzip -o ff.zip
-          find . -name "ffmpeg" -type f -exec mv {} . \;
+          find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
           chmod +x ffmpeg
 
-      - name: Icons
+      - name: Create macOS Icon
         run: |
           mkdir -p F.iconset
-          sips -z 1024 1024 icon.png --out F.iconset/icon_512x512@2x.png
-          sips -z 512 512 icon.png --out F.iconset/icon_512x512.png
+          sips -s format png icon.png --resampleHeightWidth 1024 1024 --out F.iconset/icon_512x512@2x.png
+          sips -s format png icon.png --resampleHeightWidth 512 512 --out F.iconset/icon_512x512.png
           iconutil -c icns F.iconset
 
-      - name: PyInstaller
-        run: pyinstaller --windowed --onefile --add-binary "ffmpeg:." --icon "F.icns" --name "Fusion" main.py
-
-      - name: Finalize
+      - name: PyInstaller Build
         run: |
-          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          cd dist && zip -r ../Fusion.zip Fusion.app
+          # pkgutil hatasını ve PyQt6 eksiklerini gidermek için tüm flagler eklendi
+          pyinstaller --windowed --onefile \
+            --add-binary "ffmpeg:." \
+            --icon "F.icns" \
+            --name "Fusion" \
+            --hidden-import "pkgutil" \
+            --collect-all "PyQt6" \
+            main.py
 
-      - name: Upload
+      - name: Fix Permissions and Zip
+        run: |
+          # Uygulama içindeki ana dosyaya çalışma izni ver
+          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
+          cd dist && zip -r -y ../Fusion_Silicon.zip Fusion.app
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App
-          path: Fusion.zip
+          name: Fusion-Silicon-v1
+          path: Fusion_Silicon.zip
