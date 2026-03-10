@@ -37,27 +37,30 @@ jobs:
 
       - name: PyInstaller Build
         run: |
-          # --hidden-import "PyQt6.sip" ekleyerek o hatayı kökten çözüyoruz.
-          # --onedir moduna devam ediyoruz (çakışmaları önlemek için).
-          pyinstaller --windowed \
+          # Önceki hatalı kalıntıları temizle
+          rm -rf build dist Fusion.spec
+          
+          # --collect-all yerine daha güvenli olan submodule toplama metoduna geçtik
+          # Bu, QtBluetooth gibi çakışan framework hatalarını engeller.
+          pyinstaller --windowed --noconfirm \
             --add-binary "ffmpeg:." \
             --icon "F.icns" \
             --name "Fusion" \
             --hidden-import "pkgutil" \
             --hidden-import "PyQt6.sip" \
-            --collect-all "PyQt6" \
+            --collect-submodules "PyQt6" \
             main.py
 
       - name: Fix Permissions and Zip
         run: |
-          # Ana dosyaya ve FFmpeg'e çalışma izni ver
+          # Uygulama paketinin içindeki ana binary'ye izin ver
           chmod +x dist/Fusion.app/Contents/MacOS/Fusion
+          # İçerdeki ffmpeg'i bul ve izin ver
           find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-          # Paketi zipleyelim
-          cd dist && zip -r -y ../Fusion_Silicon_Final.zip Fusion.app
+          cd dist && zip -r -y ../Fusion_Silicon.zip Fusion.app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-Silicon-Final
-          path: Fusion_Silicon_Final.zip
+          name: Fusion-Silicon-App
+          path: Fusion_Silicon.zip
