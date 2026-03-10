@@ -1,202 +1,42 @@
-name: Build Fusion Apple Silicon
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+name: Build
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: macos-14
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
-      - name: Libs
+      
+      - name: Install
         run: pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
       - name: FFmpeg
         run: |
-          curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg.zip
-          unzip -o ffmpeg.zip
-          find . -name "ffmpeg" -type f -not -path '*/.*' -exec mv {} . \;
+          curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ff.zip
+          unzip -o ff.zip
+          find . -name "ffmpeg" -type f -exec mv {} . \;
           chmod +x ffmpeg
 
       - name: Icons
         run: |
-          mkdir -p Fusion.iconset
-          sips -s format png icon.png --resampleHeightWidth 1024 1024 --out Fusion.iconset/icon_512x512@2x.png
-          sips -s format png icon.png --resampleHeightWidth 512 512 --out Fusion.iconset/icon_512x512.png
-          sips -s format png icon.png --resampleHeightWidth 256 256 --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
+          mkdir -p F.iconset
+          sips -z 1024 1024 icon.png --out F.iconset/icon_512x512@2x.png
+          sips -z 512 512 icon.png --out F.iconset/icon_512x512.png
+          iconutil -c icns F.iconset
 
       - name: PyInstaller
-        run: pyinstaller --windowed --onefile --add-binary "ffmpeg:." --icon "Fusion.icns" --name "Fusion" main.py
+        run: pyinstaller --windowed --onefile --add-binary "ffmpeg:." --icon "F.icns" --name "Fusion" main.py
 
-      - name: Perms
+      - name: Finalize
         run: |
           chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-
-      - name: Zip
-        run: |
-          cd dist
-          zip -r -y ../Fusion_Silicon.zip Fusion.app
+          cd dist && zip -r ../Fusion.zip Fusion.app
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-Silicon-v1
-          path: Fusion_Silicon.zip      - name: PyInstaller
-        run: |
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Perms
-        run: |
-          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-
-      - name: Zip
-        run: |
-          cd dist
-          zip -r -y ../Fusion_Silicon.zip Fusion.app
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-Silicon-v1
-          path: Fusion_Silicon.zip      - name: PyInstaller
-        run: |
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Perms
-        run: |
-          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-
-      - name: Zip
-        run: |
-          cd dist
-          zip -r -y ../Fusion_Silicon.zip Fusion.app
-
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-Silicon-v1
-          path: Fusion_Silicon.zip          iconutil -c icns Fusion.iconset
-
-      - name: Build Fusion App
-        run: |
-          # Basitleştirilmiş PyInstaller komutu
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Fix App Permissions Before Zipping
-        run: |
-          # Uygulamanın içindeki binary dosyalara çalışma izni veriyoruz
-          chmod +x dist/Fusion.app/Contents/MacOS/Fusion
-          # Eğer paket içine girdiyse FFmpeg'e de izin ver
-          find dist/Fusion.app -name "ffmpeg" -exec chmod +x {} \;
-
-      - name: Zip App Bundle
-        run: |
-          cd dist
-          zip -r -y ../Fusion_macOS_Silicon.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-App-Silicon
-          path: Fusion_macOS_Silicon.zip          iconutil -c icns Fusion.iconset
-
-      - name: Create Entitlements (For App Launch)
-        run: |
-          # Uygulamanın açılmama/çökme sorununu çözmek için izin dosyası
-          echo '<?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-              <true/>
-              <key>com.apple.security.cs.disable-library-validation</key>
-              <true/>
-          </dict>
-          </plist>' > entitlements.plist
-
-      - name: Build Fusion App
-        run: |
-          # PyInstaller'a entitlements dosyasını ekleyerek derliyoruz
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            --codesign-entitlements "entitlements.plist" \
-            main.py
-
-      - name: Zip App Bundle
-        run: |
-          cd dist
-          zip -r -y ../Fusion_macOS_Silicon.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-App-Silicon
-          path: Fusion_macOS_Silicon.zip          sips -z 256 256 icon.png --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
-
-      - name: Build Fusion App
-        run: |
-          # FFmpeg binary dosyasının executable yetkisini koruyarak paketle
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Zip App Bundle
-        run: |
-          cd dist
-          # -y sembolik linkleri ve izinleri korur
-          zip -r -y ../Fusion_macOS_Silicon.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-App-Silicon
-          path: Fusion_macOS_Silicon.zip          iconutil -c icns Fusion.iconset
-
-      - name: Build Fusion App
-        run: |
-          pyinstaller --windowed --onefile \
-            --add-binary "ffmpeg:." \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Zip App Bundle
-        run: |
-          # Sadece Contents değil, tüm .app klasörünü düzgünce zipleyelim
-          cd dist
-          zip -r ../Fusion_macOS_Silicon.zip Fusion.app
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-App-Silicon
-          path: Fusion_macOS_Silicon.zip
+          name: Fusion-App
+          path: Fusion.zip
