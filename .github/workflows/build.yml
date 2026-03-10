@@ -5,10 +5,10 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4 # v4'e güncellendi
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # v5'e güncellendi
         with:
           python-version: '3.10'
 
@@ -18,10 +18,10 @@ jobs:
 
       - name: Download FFmpeg and FFprobe
         run: |
-          # FFmpeg (Senin verdiğin link)
+          # FFmpeg
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip ffmpeg.zip
-          # FFprobe (Senin verdiğin yeni link)
+          # FFprobe (Senin verdiğin link)
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip ffprobe.zip
           chmod +x ffmpeg ffprobe
@@ -34,7 +34,7 @@ jobs:
             main.py
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # KRİTİK: v4 sürümü zorunlu
         with:
-          name: Fusion-App
+          name: Fusion-App-Mac
           path: dist/main.app
