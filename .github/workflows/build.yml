@@ -5,7 +5,8 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -35,6 +36,13 @@ jobs:
       - name: Compress App Bundle
         run: |
           cd dist
+          zip -r ../Fusion_Mac.zip Fusion.app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fusion-Final-Package
+          path: Fusion_Mac.zip          cd dist
           zip -r ../Fusion_Mac.zip Fusion.app
 
       - name: Upload Artifact
