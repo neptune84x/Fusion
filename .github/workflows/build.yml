@@ -2,7 +2,7 @@ name: Build Fusion Apple Silicon App
 on: 
   push:
     branches: [ main, master ]
-  workflow_dispatch: # Manuel çalıştırma butonunu geri getirir
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,11 +20,13 @@ jobs:
         run: |
           pip install PyQt6==6.6.1 pyinstaller==6.4.0
 
-      - name: Download FFmpeg 8.0.1
+      - name: Download FFmpeg (Apple Silicon Native)
         run: |
-          # Evermeet linkini daha stabil olan sürümle güncelledim
-          curl -L https://evermeet.cx/ffmpeg/get/zip/arm64/release -o ffmpeg.zip
-          unzip ffmpeg.zip
+          # FFmpeg'in resmî GitHub release'inden macOS arm64 sürümünü çekiyoruz
+          curl -L https://github.com/FFmpeg/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-macos-arm64-nonfree.tar.xz -o ffmpeg.tar.xz
+          tar -xf ffmpeg.tar.xz
+          # Çıkarılan klasörün içindeki ffmpeg dosyasını ana dizine taşıyoruz
+          find . -name "ffmpeg" -type f -exec mv {} . \;
           chmod +x ffmpeg
 
       - name: Create macOS Iconset
@@ -37,6 +39,7 @@ jobs:
 
       - name: Build Fusion App
         run: |
+          # PyInstaller ile FFmpeg'i içine gömüp tek bir .app oluşturuyoruz
           pyinstaller --windowed --onefile \
             --add-binary "ffmpeg:." \
             --icon "Fusion.icns" \
@@ -46,5 +49,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-AppleSilicon-v8.0.1
+          name: Fusion-AppleSilicon-v1.0
           path: dist/Fusion.app
