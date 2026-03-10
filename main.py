@@ -26,7 +26,7 @@ class ConversionThread(QThread):
         base_path = os.path.splitext(self.input_file)[0]
         output_file = f"{base_path}_Fusion.mkv"
         
-        # Ek altyazıları tara
+        # Ek altyazıları tara (video.tr.srt, video.tr.ass vb.)
         subs = glob.glob(f"{base_path}*.*")
         ext_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass')) and s != self.input_file]
 
@@ -35,29 +35,34 @@ class ConversionThread(QThread):
         for sub in ext_subs:
             cmd.extend(['-i', sub])
 
-        # MAP: Video, Ses ve Kaynak Altyazıları Olduğu Gibi Al
-        cmd.extend(['-map', '0:v', '-map', '0:a?', '-map', '0:s?'])
-        
-        # Metadata: Kaynaktaki tüm track dillerini koru, global title'ı sil
-        cmd.extend(['-map_metadata', '0', '-map_metadata:g', '-1', '-map_chapters', '0'])
+        # 1. TÜM İZLERİ MAPLE (Video, Ses, Orijinal Altyazılar ve Yeni Altyazılar)
+        cmd.extend(['-map', '0:v', '-map', '0:a', '-map', '0:s?'])
+        for i in range(len(ext_subs)):
+            cmd.extend(['-map', str(i + 1)])
 
-        # DIŞ ALTYAZI DİL ATAMASI (KARIŞIKLIĞI ÖNLEME):
-        # Kaynaktaki altyazıların üzerine yazmamak için indisleri doğru yönetiyoruz.
+        # 2. TEMİZLİK OPERASYONU (Tagleri temizle ama dilleri koru)
+        # Global ve Track bazlı tüm metadataları sıfırla (Title, Encoder vb. temizlenir)
+        cmd.extend(['-map_metadata', '-1'])
+        
+        # Chapterları (Bölümleri) koru
+        cmd.extend(['-map_chapters', '0'])
+
+        # 3. DİL KODLARINI TEKRAR ATAMA (Hem iç hem dış altyazılar için)
+        # FFmpeg her şeyi kopyalarken dilleri de kaybedebilir, bu yüzden manuel atıyoruz.
+        
+        # Dışarıdan eklenenlerin dilini dosya isminden çek (video.tr.srt -> tr)
         for i, sub_path in enumerate(ext_subs):
-            cmd.extend(['-map', str(i + 1)]) # Dış altyazıyı ekle
-            
-            # Dil yakalama (en, tr, ger...)
             match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', sub_path.lower())
             lang = match.group(1) if match else 'und'
-            
-            # Kaynak dosyadaki altyazıların (0:s) sonrasına, yeni stream'ler olarak metadata ekle
-            # Dış altyazılar FFmpeg'de stream sırasında sona eklenir.
-            # -metadata:s:s:{N} komutuyla N. altyazı kanalına dil atanır.
+            # Yeni eklenen altyazıların indisi, orijinal altyazı sayısından sonra başlar.
+            # Ancak -map_metadata -1 sonrası güvenli yol stream bazlı metadata atamaktır.
             cmd.extend([f'-metadata:s:s:{i}', f'language={lang}'])
 
-        # KODLAMA: Her şeyi kopyala, altyazıları srt yap
+        # 4. KODLAMA AYARLARI
         cmd.extend([
-            '-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt',
+            '-c:v', 'copy', 
+            '-c:a', 'copy', 
+            '-c:s', 'srt',  # Tüm altyazıları SRT'ye dönüştür
             '-y', output_file
         ])
         
@@ -67,7 +72,6 @@ class ConversionThread(QThread):
         self.finished_signal.emit(self)
 
 class SublerListWidget(QWidget):
-    """Subler tipi gerçek pijama deseni"""
     def paintEvent(self, event):
         painter = QPainter(self)
         row_height = 25
@@ -109,15 +113,14 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # --- TOOLBAR (Görseldeki Gibi Büyük İkonlar) ---
+        # TOOLBAR (Büyük İkonlar ve Subler Stili)
         toolbar = QWidget()
-        toolbar.setFixedHeight(110) # Daha yüksek toolbar
+        toolbar.setFixedHeight(110)
         toolbar.setStyleSheet("background: white; border-bottom: 1px solid #C0C0C0;")
         t_layout = QHBoxLayout(toolbar)
         t_layout.setContentsMargins(25, 10, 25, 10)
-        t_layout.setSpacing(30)
+        t_layout.setSpacing(35)
         
-        # İkonları belirgin şekilde büyüttük (24px -> 40px civarı emoji boyutu)
         self.start_btn = self.create_nav_btn("Start", "▶️")
         self.settings_btn = self.create_nav_btn("Settings", "⚙️")
         self.add_btn = self.create_nav_btn("Add Item", "➕")
@@ -127,7 +130,7 @@ class MainWindow(QMainWindow):
         t_layout.addWidget(self.settings_btn)
         t_layout.addWidget(self.add_btn)
 
-        # --- LİSTE ---
+        # LİSTE
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -139,17 +142,22 @@ class MainWindow(QMainWindow):
         self.list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.container)
 
-        # --- FOOTER ---
+        # FOOTER
         footer = QWidget()
         footer.setFixedHeight(55)
         footer.setStyleSheet("background: #F0F0F0; border-top: 1px solid #C0C0C0;")
         f_layout = QHBoxLayout(footer)
-        f_layout.setContentsMargins(15, 0, 15, 0)
+        f_layout.setContentsMargins(20, 0, 20, 0)
         self.status_label = QLabel("0 items in queue.")
+        self.status_label.setStyleSheet("font-size: 13px; color: #333;")
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedWidth(220)
         self.progress_bar.setFixedHeight(10)
         self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background: #E5E5E5; border-radius: 5px; border: none; }
+            QProgressBar::chunk { background: #007AFF; border-radius: 5px; }
+        """)
         f_layout.addWidget(self.status_label)
         f_layout.addStretch()
         f_layout.addWidget(self.progress_bar)
@@ -165,24 +173,17 @@ class MainWindow(QMainWindow):
 
     def create_nav_btn(self, text, icon_char):
         btn = QPushButton()
-        btn.setFixedSize(90, 90) # Buton alanı büyütüldü
-        # Subler stili: İkon ve metni alt alta büyük boyutta göster
+        btn.setFixedSize(95, 95)
         btn.setText(f"{icon_char}\n\n{text}")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet("""
             QPushButton { 
-                border: none; 
-                font-size: 13px; /* Yazı boyutu büyütüldü */
-                color: #333; 
-                background: transparent; 
-                font-weight: 500;
-                padding: 10px;
+                border: none; font-size: 13px; color: #333; 
+                background: transparent; font-weight: 500;
             }
-            QPushButton:hover { background-color: #F5F5F5; border-radius: 15px; }
+            QPushButton:hover { background-color: #F2F2F2; border-radius: 15px; }
         """)
-        # Emojiyi (ikonu) büyütmek için font ayarı
-        font = QFont()
-        font.setPointSize(28) # İkon (emoji) büyüklüğü
-        btn.setFont(font)
+        font = QFont(); font.setPointSize(32); btn.setFont(font)
         return btn
 
     def open_files(self):
