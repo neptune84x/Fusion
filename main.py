@@ -29,40 +29,31 @@ class ConversionThread(QThread):
         output_file = f"{base_path}_Fusion.mkv"
         
         subs = glob.glob(f"{base_path}*.*")
-        valid_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass'))]
+        external_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass'))]
 
         cmd = [ffmpeg_path, '-i', self.input_file]
-        
-        for sub in valid_subs:
+        for sub in external_subs:
             cmd.extend(['-i', sub])
 
-        cmd.extend(['-map', '0:v', '-map', '0:a?'])
+        cmd.extend([
+            '-map', '0:v', 
+            '-map', '0:a?', 
+            '-map', '0:s?', # Kaynak dosyadaki altyazıları dahil et
+        ])
         
-        for i in range(len(valid_subs)):
+        for i in range(len(external_subs)):
             cmd.extend(['-map', str(i + 1)])
 
         cmd.extend([
             '-c:v', 'copy', 
             '-c:a', 'copy', 
-            '-c:s', 'srt',
+            '-c:s', 'srt', # Hem iç hem dış tüm altyazıları SRT yap
             '-map_metadata', '-1',
-            '-map_chapters', '0'
+            '-map_chapters', '0',
+            '-y', output_file
         ])
-
-        for i, sub_path in enumerate(valid_subs):
-            parts = sub_path.split('.')
-            lang = "eng"
-            if len(parts) >= 3:
-                short_lang = parts[-2].lower()
-                lang_map = {"tr": "tur", "en": "eng", "fr": "fra", "de": "deu"}
-                lang = lang_map.get(short_lang, "eng")
-            
-            cmd.extend([f'-metadata:s:s:{i}', f'language={lang}', f'-metadata:s:s:{i}', 'title='])
-
-        cmd.extend(['-y', output_file])
         
         try:
-            self.file_progress.emit(30)
             process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
             process.wait()
             self.file_progress.emit(100)
@@ -73,13 +64,19 @@ class ConversionThread(QThread):
 class FileWidget(QFrame):
     def __init__(self, filename):
         super().__init__()
-        self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setStyleSheet("QFrame { background: transparent; border-bottom: 1px solid #333; }")
+        self.setFixedHeight(50)
+        self.setStyleSheet("""
+            QFrame { 
+                background: transparent; 
+                border-bottom: 1px solid #d1d1d1;
+            }
+            QLabel { color: #333; font-size: 13px; font-family: 'Helvetica'; }
+        """)
         layout = QHBoxLayout()
         self.label = QLabel(filename)
-        self.label.setStyleSheet("font-size: 13px;")
         self.pbar = QProgressBar()
-        self.pbar.setFixedHeight(12)
+        # Native macOS style enforcement
+        self.pbar.setAttribute(Qt.WidgetAttribute.WA_MacStyleToolBar) 
         layout.addWidget(self.label, 2)
         layout.addWidget(self.pbar, 1)
         self.setLayout(layout)
@@ -91,7 +88,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fusion")
-        self.resize(800, 550)
+        self.resize(800, 600)
         self.setAcceptDrops(True)
         
         self.central_widget = QWidget()
@@ -100,77 +97,85 @@ class MainWindow(QMainWindow):
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(10, 5, 10, 5)
-        self.add_btn = QPushButton("+ Add Files")
-        self.add_btn.clicked.connect(self.open_files)
-        toolbar.addWidget(self.add_btn)
-        toolbar.addStretch()
+        # Toolbar
+        toolbar = QWidget()
+        toolbar.setFixedHeight(45)
+        toolbar.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f6f6f6, stop:1 #dcdcdc); border-bottom: 1px solid #b1b1b1;")
+        t_layout = QHBoxLayout(toolbar)
         
+        self.add_btn = QPushButton("+ Add Files")
+        self.start_btn = QPushButton("▶ Start All")
+        self.start_btn.setEnabled(False)
+        self.start_btn.clicked.connect(self.start_all)
+        self.add_btn.clicked.connect(self.open_files)
+        
+        t_layout.addWidget(self.add_btn)
+        t_layout.addWidget(self.start_btn)
+        t_layout.addStretch()
+        
+        # Subler-style Striped Paper Background
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("background-color: #1e1e1e; border: none;")
+        self.scroll.setStyleSheet("""
+            QScrollArea { 
+                border: none;
+                background-color: #f0f0f0;
+                background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAyCAYAAAC9979pAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAABhJREFUeNpiYGBgYPiPAf8D8T8AAnwBAGYBA/6TfN4AAAAASUVORK5CYII=');
+            }
+        """)
+        
         self.list_container = QWidget()
+        self.list_container.setStyleSheet("background: transparent;")
         self.list_layout = QVBoxLayout(self.list_container)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        self.list_layout.setSpacing(0)
         self.list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.list_container)
 
-        self.drop_overlay = QLabel("Drag files here or use the + button")
-        self.drop_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.drop_overlay.setStyleSheet("color: #666; font-size: 16px;")
-        
-        self.footer = QWidget()
-        self.footer.setFixedHeight(40)
-        footer_layout = QHBoxLayout(self.footer)
-        self.total_pbar = QProgressBar()
-        self.total_pbar.setFixedHeight(15)
-        footer_layout.addWidget(self.total_pbar)
-
-        self.main_layout.addLayout(toolbar)
+        self.main_layout.addWidget(toolbar)
         self.main_layout.addWidget(self.scroll)
-        self.main_layout.addWidget(self.footer)
 
+        self.queue = []
         self.threads = []
-        self.completed_count = 0
         self.total_count = 0
+        self.completed_count = 0
 
     def open_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Videos", "", "Video Files (*.mp4 *.mkv *.mov *.avi)")
-        if files: self.process_files(files)
+        if files: self.add_to_list(files)
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls(): e.accept()
 
     def dropEvent(self, e):
         files = [u.toLocalFile() for u in e.mimeData().urls() if os.path.isfile(u.toLocalFile())]
-        if files: self.process_files(files)
+        if files: self.add_to_list(files)
 
-    def process_files(self, files):
-        self.drop_overlay.hide()
-        self.total_count += len(files)
+    def add_to_list(self, files):
         for path in files:
             item = FileWidget(os.path.basename(path))
             self.list_layout.addWidget(item)
+            self.queue.append((path, item))
+        self.start_btn.setEnabled(True)
+
+    def start_all(self):
+        self.start_btn.setEnabled(False)
+        for path, widget in self.queue:
             thread = ConversionThread(path)
-            thread.file_progress.connect(item.update_progress)
+            thread.file_progress.connect(widget.update_progress)
             thread.finished_signal.connect(self.on_finished)
             self.threads.append(thread)
             thread.start()
-        self.update_total_status()
+        self.queue = []
 
     def on_finished(self, result, thread_obj):
         self.completed_count += 1
-        self.update_total_status()
         if thread_obj in self.threads: self.threads.remove(thread_obj)
-
-    def update_total_status(self):
-        if self.total_count > 0:
-            val = int((self.completed_count / self.total_count) * 100)
-            self.total_pbar.setValue(val)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
+    # macOS system style force
+    app.setStyle("macos") 
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
