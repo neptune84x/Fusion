@@ -17,31 +17,37 @@ class ConversionThread(QThread):
         self.load_external = load_external
 
     def clean_subtitle_text(self, text):
-        """İtalik hariç TÜM bold ve stil kodlarını satır bazlı kazır."""
-        # 1. İtalikleri güvene al
+        """Her türlü Bold, Stil ve Renk kodunu kazır, SADECE italikleri bırakır."""
+        # 1. İtalikleri geçici olarak koru
         text = re.sub(r'<(i|I)>', '[[i]]', text)
         text = re.sub(r'</(i|I)>', '[[/i]]', text)
         
-        # 2. Bold etiketlerini temizle (<b>, {b1}, {\b1})
-        text = re.sub(r'<(b|B)>', '', text)
-        text = re.sub(r'</(b|B)>', '', text)
+        # 2. Bold (Kalın) ifadelerini her formatta sil: <b>, {b1}, {\b1}, {\b}
+        text = re.sub(r'<(b|B)>|</(b|B)>', '', text)
+        text = re.sub(r'\\b[0-1]', '', text) 
+        text = re.sub(r'\{b[0-1]\}', '', text)
         
-        # 3. ASS/SSA stil kodlarını sil ({...}) - Bold ve Color genelde buradadır
-        text = re.sub(r'\{[^\}]*\}', '', text)
-        
-        # 4. Diğer HTML kalıntılarını temizle (<font>, <u> vb.)
+        # 3. ASS/SSA stil tanımlarını temizle (Satır başındaki 'Style:' blokları dahil)
+        lines = []
+        for line in text.splitlines():
+            if line.startswith('Style:') or line.startswith('Format:'):
+                continue
+            # Süslü parantez içindeki her şeyi (renk, pozisyon, bold) sil
+            line = re.sub(r'\{[^\}]*\}', '', line)
+            lines.append(line)
+        text = "\n".join(lines)
+
+        # 4. Diğer tüm HTML etiketlerini ve Markdown boldlarını sil
         text = re.sub(r'<[^>]*>', '', text)
-        
-        # 5. Markdown bold kalıntılarını sil (** veya __)
         text = text.replace('**', '').replace('__', '')
         
-        # 6. İtalikleri geri yükle
+        # 5. İtalikleri standart SRT formatında geri getir
         text = text.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
         
+        # 6. Fazla boşlukları temizle
         return text.strip()
 
     def process_file_cleaning(self, file_path):
-        """Dosyayı okur, her türlü bold/stil yapısını siler ve UTF-8 yazar."""
         try:
             if not os.path.exists(file_path): return
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -56,16 +62,13 @@ class ConversionThread(QThread):
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         
         base_path = os.path.splitext(self.input_file)[0]
-        # KLASÖR DEĞİL 'DOSYA' GİBİ GÖRÜNEN TEMP YAPISI
+        # .fusiontemp paket dosyası gibi görünen gizli temp alanı
         temp_dir_path = base_path + ".fusiontemp"
-        
-        # Eğer varsa eski kalıntıyı sil ve temiz oluştur
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
         output_file = base_path + "_Fusion.mkv"
 
-        # 1. Analiz
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
@@ -77,21 +80,16 @@ class ConversionThread(QThread):
                 lang = s.get('tags', {}).get('language', 'und')
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
-        # 2. Dahili Altyazıları Çıkar ve Kesin Temizle
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
-            
-            # Sökerken tüm formatları SRT'ye zorla ki içindeki gizli boldlar açığa çıksın
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub_path], 
+            # Dışarı aktarırken metin tabanlı srt'ye zorla
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            # Python ile SRT içindeki bold/stil ne varsa kazı
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # 3. Harici Altyazıları Temizle
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
@@ -100,7 +98,7 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': f, 'lang': lang})
 
-        # 4. Muxing: Metadata (Title/Encoder) Sil, Chapter ve Dil Koru
+        # Muxing: Chapters ve Dil korunur, Global Metadata temizlenir
         cmd = [ffmpeg, '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -109,15 +107,13 @@ class ConversionThread(QThread):
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
             l_code = lang_map.get(c['lang'], c['lang'])
-            cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}"])
+            cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
-        # Final ayarlar: Metadata sil, Chapter koru, altyazıları tertemiz srt formatında göm
+        # KRİTİK: map_metadata -1 çöpleri temizler, map_chapters 0 bölümleri tutar
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        # İşlem bitince temp dosyasını/klasörünü sil
         shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
@@ -238,14 +234,11 @@ class MainWindow(QMainWindow):
 
     def setup_menu(self):
         mb = self.menuBar()
-        # macOS App Menu
         am = mb.addMenu("Fusion")
         a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about); am.addAction(a_about)
         a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
-        # File Menu
         fm = mb.addMenu("File")
         a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
-        # Edit Menu (Yeni eklendi)
         em = mb.addMenu("Edit")
         a_rem = QAction("Remove Selected", self); a_rem.setShortcut(QKeySequence("Backspace")); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem)
         a_clear = QAction("Clear Completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
