@@ -8,7 +8,6 @@ try:
 except ImportError:
     sys.exit(1)
 
-# ConversionThread sınıfı aynen korunmuştur (fonksiyonel değişiklik yok)
 class ConversionThread(QThread):
     finished_signal = pyqtSignal(object)
     def __init__(self, input_file, widget, load_external=True):
@@ -137,8 +136,8 @@ class MainWindow(QMainWindow):
         
         main_v = QVBoxLayout(); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(0)
         
-        # Toolbar: Yekpare görünüm ve büyük ikonlar
-        toolbar = QWidget(); toolbar.setFixedHeight(90); toolbar.setStyleSheet("background: white; border-bottom: 1px solid #d1d1d6;")
+        # Toolbar: Yekpare görünüm ve %50 büyük ikonlar
+        toolbar = QWidget(); toolbar.setFixedHeight(95); toolbar.setStyleSheet("background: white; border-bottom: 1px solid #d1d1d6;")
         t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(20, 0, 20, 0); t_lay.setSpacing(20)
         
         self.start_btn = self.create_nav_btn("▶", "Start")
@@ -167,12 +166,42 @@ class MainWindow(QMainWindow):
         self.threads = []; self.active_queue = []
 
     def create_nav_btn(self, icon, text):
-        # Yekpare görünüm için spacing 0, ikon boyutu %50 büyütüldü (24->36)
-        btn = QPushButton(); btn.setFixedSize(70, 75); btn.setStyleSheet("QPushButton{border:none; background:transparent; border-radius:10px;} QPushButton:hover{background:#f5f5f7;}")
+        btn = QPushButton(); btn.setFixedSize(75, 80); btn.setStyleSheet("QPushButton{border:none; background:transparent; border-radius:10px;} QPushButton:hover{background:#f5f5f7;}")
         l = QVBoxLayout(btn); l.setContentsMargins(0,0,0,0); l.setSpacing(0)
         ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 36px; color: #1d1d1f;")
         tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 11px; color: #1d1d1f; font-weight: 500;")
         l.addWidget(ic); l.addWidget(tx); return btn
+
+    def setup_menu(self):
+        menubar = self.menuBar()
+        # App Menu
+        app_menu = menubar.addMenu("Fusion")
+        about_act = QAction("About Fusion", self)
+        about_act.triggered.connect(self.show_about)
+        app_menu.addAction(about_act)
+        app_menu.addSeparator()
+        quit_act = QAction("Quit", self)
+        quit_act.setShortcut(QKeySequence("Ctrl+Q"))
+        quit_act.triggered.connect(self.close)
+        app_menu.addAction(quit_act)
+
+        # File Menu
+        file_menu = menubar.addMenu("File")
+        add_act = QAction("Add Item...", self)
+        add_act.setShortcut(QKeySequence("Ctrl+O"))
+        add_act.triggered.connect(self.open_files)
+        file_menu.addAction(add_act)
+        
+        # Edit Menu
+        edit_menu = menubar.addMenu("Edit")
+        rem_sel_act = QAction("Remove Selected", self)
+        rem_sel_act.setShortcut(QKeySequence("Backspace"))
+        rem_sel_act.triggered.connect(self.remove_selected)
+        edit_menu.addAction(rem_sel_act)
+        
+        rem_comp_act = QAction("Remove Completed", self)
+        rem_comp_act.triggered.connect(self.remove_completed)
+        edit_menu.addAction(rem_comp_act)
 
     def remove_completed(self):
         to_remove = [i for i in self.container.items if i.status == "done"]
@@ -186,21 +215,8 @@ class MainWindow(QMainWindow):
             self.container.items.remove(i); i.setParent(None)
         self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
 
-    def setup_menu(self):
-        menubar = self.menuBar()
-        app_menu = menubar.addMenu("Fusion")
-        app_menu.addAction("About Fusion", self.show_about)
-        app_menu.addSeparator()
-        app_menu.addAction("Quit", self.close, QKeySequence("Ctrl+Q"))
-
-        file_menu = menubar.addMenu("File")
-        file_menu.addAction("Add Item...", self.open_files, QKeySequence("Ctrl+O"))
-        
-        edit_menu = menubar.addMenu("Edit")
-        edit_menu.addAction("Remove Selected", self.remove_selected, QKeySequence("Backspace"))
-        edit_menu.addAction("Remove Completed", self.remove_completed)
-
     def show_about(self): QMessageBox.about(self, "About Fusion", "Fusion v1.0\nHigh-performance media optimizer for macOS.")
+    
     def show_settings_menu(self):
         menu = QMenu(self)
         ext_sub_act = QAction("Load External Subtitles", self); ext_sub_act.setCheckable(True); ext_sub_act.setChecked(self.load_external_subs)
@@ -230,7 +246,9 @@ class MainWindow(QMainWindow):
     def on_done(self, t):
         t.widget.set_status("done")
         done = len([i for i in self.container.items if i.status == "done"])
-        self.pb.setValue(int((done / len(self.container.items)) * 100)); self.process_next()
+        total = len(self.container.items)
+        if total > 0: self.pb.setValue(int((done / total) * 100))
+        self.process_next()
 
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls(): e.accept()
