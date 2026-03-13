@@ -59,7 +59,6 @@ class ConversionThread(QThread):
         cmd.extend(['-map_metadata', '-1', '-map_chapters', '0'])
 
         lang_codes = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
-        
         for i, lang in enumerate(source_langs['audio']):
             cmd.extend([f'-metadata:s:a:{i}', f'language={lang}'])
         for i, lang in enumerate(source_langs['subtitle']):
@@ -72,7 +71,6 @@ class ConversionThread(QThread):
             cmd.extend([f'-metadata:s:s:{start_idx + i}', f'language={lang_codes.get(lang, lang)}'])
 
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', '-y', output_file])
-        
         try: subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except: pass
         self.finished_signal.emit(self)
@@ -163,8 +161,9 @@ class MainWindow(QMainWindow):
         
         main_v = QVBoxLayout(); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(0)
         
-        toolbar = QWidget(); toolbar.setFixedHeight(95); toolbar.setStyleSheet("background: white; border: none;")
-        t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(30, 0, 30, 0); t_lay.setSpacing(10)
+        # Toolbar yüksekliği 95'ten 75'e düşürüldü
+        toolbar = QWidget(); toolbar.setFixedHeight(75); toolbar.setStyleSheet("background: white; border: none;")
+        t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(30, 0, 30, 0); t_lay.setSpacing(5) # Butonlar arası mesafe daraltıldı
         
         self.start_btn = self.create_nav_btn("▶", "Start")
         self.settings_btn = self.create_nav_btn("⚙", "Settings")
@@ -192,10 +191,12 @@ class MainWindow(QMainWindow):
         self.threads = []; self.active_queue = []
 
     def create_nav_btn(self, icon, text):
-        btn = QPushButton(); btn.setFixedSize(80, 85); btn.setStyleSheet("QPushButton{border:none; outline:none; background:transparent;} QPushButton:hover{background:#f5f5f7; border-radius:12px;}")
+        # Buton boyutu 80x85'ten 60x65'e düşürüldü (%25 küçültme)
+        btn = QPushButton(); btn.setFixedSize(60, 65); btn.setStyleSheet("QPushButton{border:none; outline:none; background:transparent;} QPushButton:hover{background:#f5f5f7; border-radius:10px;}")
         l = QVBoxLayout(btn); l.setContentsMargins(0,0,0,0); l.setSpacing(0)
-        ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 36px; color: #1d1d1f; border: none; background: transparent;")
-        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 11px; color: #1d1d1f; font-weight: 500; border: none; background: transparent;")
+        # İkon boyutu 36'dan 26'ya, yazı boyutu 11'den 10'a çekildi
+        ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 26px; color: #1d1d1f; border: none; background: transparent;")
+        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 10px; color: #1d1d1f; font-weight: 500; border: none; background: transparent; margin-top: -2px;")
         l.addWidget(ic); l.addWidget(tx); return btn
 
     def setup_menu(self):
@@ -205,11 +206,9 @@ class MainWindow(QMainWindow):
         app_menu.addAction(about_act); app_menu.addSeparator()
         quit_act = QAction("Quit", self); quit_act.setShortcut(QKeySequence("Ctrl+Q")); quit_act.triggered.connect(self.close)
         app_menu.addAction(quit_act)
-
         file_menu = menubar.addMenu("File")
         add_act = QAction("Add Item...", self); add_act.setShortcut(QKeySequence("Ctrl+O")); add_act.triggered.connect(self.open_files)
         file_menu.addAction(add_act)
-        
         edit_menu = menubar.addMenu("Edit")
         rem_sel_act = QAction("Remove Selected", self); rem_sel_act.setShortcut(QKeySequence("Backspace")); rem_sel_act.triggered.connect(self.remove_selected)
         edit_menu.addAction(rem_sel_act)
