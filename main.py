@@ -16,14 +16,14 @@ class ConversionThread(QThread):
         self.widget = widget
         self.load_external = load_external
 
-    def clean_srt_text(self, text):
-        """İtalik hariç tüm HTML ve Stil (ASS) etiketlerini temizler."""
-        # 1. İtalikleri geçici olarak koru
+    def clean_subtitle_text(self, text):
+        """İtalik hariç TÜM bold, color ve stil etiketlerini temizler."""
+        # 1. İtalikleri korumaya al
         text = re.sub(r'<(i|I)>', '[[i]]', text)
         text = re.sub(r'</(i|I)>', '[[/i]]', text)
-        # 2. Tüm HTML etiketlerini (<b...>, <font...>) temizle
+        # 2. Tüm HTML benzeri etiketleri sil (<b...>, <font...>, <u...>)
         text = re.sub(r'<[^>]*>', '', text)
-        # 3. Süslü parantez stil kodlarını ({b1}, {\pos...}) temizle
+        # 3. ASS/SSA süslü parantez stil kodlarını sil ({b1}, {\pos...}, {c&H...})
         text = re.sub(r'\{[^\}]*\}', '', text)
         # 4. İtalikleri geri yükle
         text = text.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
@@ -34,7 +34,7 @@ class ConversionThread(QThread):
             if not os.path.exists(file_path): return
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            cleaned = self.clean_srt_text(content)
+            cleaned = self.clean_subtitle_text(content)
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(cleaned)
         except: pass
@@ -44,10 +44,11 @@ class ConversionThread(QThread):
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         
         base_path = os.path.splitext(self.input_file)[0]
-        temp_dir = f"{base_path}_fusion_tmp"
+        temp_dir = base_path + "_fusion_tmp"
         os.makedirs(temp_dir, exist_ok=True)
-        output_file = f"{base_path}_Fusion.mkv"
+        output_file = base_path + "_Fusion.mkv"
 
+        # 1. Analiz
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
@@ -59,24 +60,29 @@ class ConversionThread(QThread):
                 lang = s.get('tags', {}).get('language', 'und')
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
+        # 2. Altyazıları Çıkart ve TEMİZLE
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
-            temp_sub = os.path.join(temp_dir, f"int_{i}.srt")
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub], 
+            temp_sub = os.path.join(temp_dir, "int_" + str(i) + ".srt")
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', "0:" + str(sub['index']), temp_sub], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub)
             cleaned_list.append({'path': temp_sub, 'lang': sub['lang']})
 
         if self.load_external:
-            for f in glob.glob(f"{base_path}*.*"):
+            for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
                     self.process_file_cleaning(f)
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': f, 'lang': lang})
 
+        # 3. Muxing & Metadata Temizliği
+        # -map_metadata -1: Global metadatayı siler
+        # -map_chapters 0: Bölümleri korur
         cmd = [ffmpeg, '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
+        
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
         
         lang_map = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
@@ -85,7 +91,10 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend(["-metadata:s:s:" + str(i), "language=" + l_code])
 
-        cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', '-y', output_file])
+        # Global metadatayı temizle, Chapterları koru, Altyazıları SRT (Temiz) formatına zorla
+        cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
+                    '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
+        
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -109,13 +118,13 @@ class FileWidget(QFrame):
         icons = {"working": "●", "done": "✓", "waiting": "○"}
         colors = {"working": "#ff9500", "done": "#34c759", "waiting": "#8e8e93"}
         self.status_icon.setText(icons.get(mode, "○"))
-        self.status_icon.setStyleSheet(f"color: {colors.get(mode, '#8e8e93')}; font-size: 14px;")
+        self.status_icon.setStyleSheet("color: " + colors.get(mode, '#8e8e93') + "; font-size: 14px;")
 
     def update_style(self):
         bg = "#007aff" if self.is_selected else "transparent"
         txt = "white" if self.is_selected else "#111"
-        self.setStyleSheet(f"background-color: {bg}; border-radius: 4px;")
-        self.name_label.setStyleSheet(f"color: {txt}; font-size: 13px;")
+        self.setStyleSheet("background-color: " + bg + "; border-radius: 4px;")
+        self.name_label.setStyleSheet("color: " + txt + "; font-size: 13px;")
 
 class SublerListWidget(QWidget):
     def __init__(self, main_window):
@@ -218,12 +227,12 @@ class MainWindow(QMainWindow):
     def remove_completed(self):
         to_remove = [i for i in self.container.items if i.status == "done"]
         for i in to_remove: self.container.items.remove(i); i.setParent(None)
-        self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
+        self.st_lbl.setText(str(len(self.container.items)) + " items in queue.")
 
     def remove_selected(self):
         to_remove = [i for i in self.container.items if i.is_selected]
         for i in to_remove: self.container.items.remove(i); i.setParent(None)
-        self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
+        self.st_lbl.setText(str(len(self.container.items)) + " items in queue.")
 
     def show_about(self): QMessageBox.about(self, "About Fusion", "Fusion v1.0")
     def show_settings_menu(self):
