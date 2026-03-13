@@ -20,7 +20,8 @@ class ConversionThread(QThread):
         """
         İtalikleri korur, geri kalan tüm ASS/Renk/Stil kodlarını siler.
         """
-        # 1. Altyazıdaki italik çeşitlerini (ASS/HTML) korumaya al
+        if not text: return ""
+        # 1. Altyazıdaki italik çeşitlerini güvenli bir etikete al
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[IT_S]]', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '[[IT_E]]', text)
         
@@ -33,9 +34,8 @@ class ConversionThread(QThread):
         # 4. Korunan italikleri SRT standardına (<i>) çevir
         text = text.replace('[[IT_S]]', '<i>').replace('[[IT_E]]', '</i>')
         
-        # 5. Temizlik sonrası karakterleri düzelt
+        # 5. Gereksiz karakter temizliği
         text = text.replace('**', '').replace('__', '')
-        text = re.sub(r' +', ' ', text)
         return text.strip()
 
     def process_file_cleaning(self, file_path):
@@ -43,30 +43,18 @@ class ConversionThread(QThread):
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 content = f.read()
             
-            # Eğer dosya ASS formatındaysa sadece metin kısımlarını (Dialogue) işle
-            if "Dialogue:" in content:
-                new_lines = []
-                for line in content.splitlines():
-                    if line.startswith("Dialogue:"):
-                        parts = line.split(',', 9)
-                        if len(parts) > 9:
-                            parts[9] = self.clean_subtitle_text(parts[9])
-                            new_lines.append(f"Dialogue: {','.join(parts[0:9])},{parts[9]}")
-                        else: new_lines.append(line)
-                    else: new_lines.append(line)
-                content = "\n".join(new_lines)
-            else:
-                # SRT formatı için zaman kodlarına dokunmadan temizle
-                lines = content.splitlines()
-                new_lines = []
-                for line in lines:
-                    if "-->" not in line and not line.strip().isdigit():
-                        new_lines.append(self.clean_subtitle_text(line))
-                    else: new_lines.append(line)
-                content = "\n".join(new_lines)
-
+            # SRT yapısını bozmadan satır satır işle
+            lines = content.splitlines()
+            new_lines = []
+            for line in lines:
+                # Zaman kodu satırına veya sadece rakam olan satıra dokunma
+                if "-->" not in line and not line.strip().isdigit():
+                    new_lines.append(self.clean_subtitle_text(line))
+                else:
+                    new_lines.append(line)
+            
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
+                f.write("\n".join(new_lines))
         except: pass
 
     def run(self):
@@ -79,7 +67,7 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
-        # macOS Paket Gizleme
+        # macOS Paket Gizleme Özelliği
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
@@ -87,7 +75,7 @@ class ConversionThread(QThread):
 
         output_file = base_path + "_Fusion.mkv"
 
-        # Dosya bilgisini al
+        # Dosya bilgisini probe et
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
@@ -102,9 +90,10 @@ class ConversionThread(QThread):
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            # FFmpeg'in italikleri silmemesi için ham veriyi çekiyoruz
+            # FFmpeg'in "akıllı temizlik" yapıp italikleri silmesini engellemek için 'copy' kullanıyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "copy", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
@@ -131,7 +120,9 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
-        # Çıktı ayarları: Video/Ses kopyala, Altyazıyı SRT'ye zorla, Metadata temizle, Chapters'ı tut
+        # ÇIKTI AYARLARI
+        # -map_metadata -1: Sarı bölgedeki global metadatayı siler
+        # -map_chapters 0: Orijinal bölümleri korur
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
