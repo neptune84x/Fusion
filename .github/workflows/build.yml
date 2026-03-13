@@ -27,9 +27,9 @@ jobs:
         run: |
           # PNG dosyasını Apple ICNS formatına çeviriyoruz
           mkdir Fusion.iconset
-          sips -z 1024 1024 Gemini_Generated_Image_joa64ujoa64ujoa6.png --out Fusion.iconset/icon_512x512@2x.png
-          sips -z 512 512 Gemini_Generated_Image_joa64ujoa64ujoa6.png --out Fusion.iconset/icon_512x512.png
-          sips -z 256 256 Gemini_Generated_Image_joa64ujoa64ujoa6.png --out Fusion.iconset/icon_256x256.png
+          sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
+          sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
+          sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
           iconutil -c icns Fusion.iconset
           # Fusion.icns dosyası artık hazır
 
