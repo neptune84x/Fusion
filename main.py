@@ -2,18 +2,28 @@ import sys, os, subprocess, json, glob, re
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                                  QWidget, QLabel, QProgressBar, QScrollArea, 
-                                 QFrame, QPushButton, QFileDialog, QMenu)
-    from PyQt6.QtCore import Qt, QThread, pyqtSignal
-    from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence
+                                 QFrame, QPushButton, QFileDialog, QMenu, QMessageBox)
+    from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint
+    from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence, QPalette
 except ImportError:
     sys.exit(1)
 
 class ConversionThread(QThread):
     finished_signal = pyqtSignal(object)
-    def __init__(self, input_file, widget):
+    def __init__(self, input_file, widget, load_external=True):
         super().__init__()
         self.input_file = input_file
         self.widget = widget
+        self.load_external = load_external
+
+    def clean_srt_content(self, content):
+        """İtalik hariç tüm etiketleri temizler."""
+        # İtalikleri korumak için geçici işaret koy
+        content = content.replace('<i>', '[[i]]').replace('</i>', '[[/i]]')
+        # Diğer tüm HTML etiketlerini sil (bold, font vb.)
+        content = re.sub(r'<[^>]*>', '', content)
+        # İtalikleri geri getir
+        return content.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
 
     def run(self):
         ffmpeg_path = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
@@ -32,9 +42,11 @@ class ConversionThread(QThread):
                 if s['codec_type'] == 'subtitle': source_langs['subtitle'].append(lang)
         except: pass
 
-        # 2. DIŞ ALTYAZILAR
-        subs = glob.glob(f"{base_path}*.*")
-        ext_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass')) and s != self.input_file]
+        # 2. DIŞ ALTYAZILAR (Ayar kontrolü ile)
+        ext_subs = []
+        if self.load_external:
+            subs = glob.glob(f"{base_path}*.*")
+            ext_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass')) and s != self.input_file]
 
         # 3. KOMUT İNŞASI
         cmd = [ffmpeg_path, '-i', self.input_file]
@@ -42,10 +54,9 @@ class ConversionThread(QThread):
         cmd.extend(['-map', '0:v', '-map', '0:a?', '-map', '0:s?'])
         for i in range(len(ext_subs)): cmd.extend(['-map', str(i + 1)])
 
-        # TEMİZLİK VE CHAPTER KORUMA
         cmd.extend(['-map_metadata', '-1', '-map_chapters', '0'])
 
-        # 4. METADATA: Dilleri ekle
+        # METADATA
         for i, lang in enumerate(source_langs['audio']):
             cmd.extend([f'-metadata:s:a:{i}', f'language={lang}'])
         for i, lang in enumerate(source_langs['subtitle']):
@@ -59,9 +70,11 @@ class ConversionThread(QThread):
             final_lang = lang_codes.get(lang, lang)
             cmd.extend([f'-metadata:s:s:{start_idx + i}', f'language={final_lang}'])
 
-        # SRT DÖNÜŞTÜRME VE KAYIT
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', '-y', output_file])
-        try: subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        try: 
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # SRT Temizleme İşlemi (Opsiyonel: Eğer çıktı dosyasındaki altyazıları manipüle etmek gerekirse)
         except: pass
         self.finished_signal.emit(self)
 
@@ -72,15 +85,11 @@ class FileWidget(QFrame):
         self.is_selected = False
         self.status = "waiting"
         self.setFixedHeight(30)
-        
         self.layout = QHBoxLayout(self); self.layout.setContentsMargins(15, 0, 15, 0)
         self.status_icon = QLabel("○"); self.status_icon.setFixedWidth(20)
-        self.status_icon.setStyleSheet("color: #8e8e93; font-size: 14px;")
-        
         self.name_label = QLabel(filename)
-        self.name_label.setStyleSheet("font-size: 13px; color: #111;")
-        
         self.layout.addWidget(self.status_icon); self.layout.addWidget(self.name_label); self.layout.addStretch()
+        self.update_style()
 
     def set_status(self, mode):
         self.status = mode
@@ -88,12 +97,6 @@ class FileWidget(QFrame):
         colors = {"working": "#ff9500", "done": "#34c759", "waiting": "#8e8e93"}
         self.status_icon.setText(icons.get(mode, "○"))
         self.status_icon.setStyleSheet(f"color: {colors.get(mode, '#8e8e93')}; font-size: 14px;")
-
-    def mousePressEvent(self, event):
-        if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier or event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-            for item in self.parent_list.items: item.is_selected = False; item.update_style()
-        self.is_selected = not self.is_selected
-        self.update_style()
 
     def update_style(self):
         bg = "#007aff" if self.is_selected else "transparent"
@@ -105,28 +108,64 @@ class SublerListWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.items = []
+        self.selection_start = None
+        self.selection_rect = QRect()
         self.layout = QVBoxLayout(self); self.layout.setContentsMargins(0, 0, 0, 0); self.layout.setSpacing(0); self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        # Satır çizgileri
         row_h = 30
         for i in range(0, (self.height() // row_h) + 1):
             if i % 2 == 1: painter.fillRect(0, i * row_h, self.width(), row_h, QBrush(QColor(245, 245, 247)))
+        
+        # Seçim karesi
+        if not self.selection_rect.isNull():
+            painter.setPen(QColor(0, 122, 255, 150))
+            painter.setBrush(QColor(0, 122, 255, 50))
+            painter.drawRect(self.selection_rect)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.selection_start = event.pos()
+            if not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+                for item in self.items: item.is_selected = False; item.update_style()
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        if self.selection_start:
+            self.selection_rect = QRect(self.selection_start, event.pos()).normalized()
+            for item in self.items:
+                item_rect = item.geometry()
+                if self.selection_rect.intersects(item_rect):
+                    item.is_selected = True
+                item.update_style()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        self.selection_start = None
+        self.selection_rect = QRect()
+        self.update()
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Queue"); self.resize(650, 500); self.setAcceptDrops(True)
+        self.setWindowTitle("Fusion"); self.resize(650, 500); self.setAcceptDrops(True)
+        self.load_external_subs = True # Varsayılan ayar
+        
+        self.setup_menu()
         
         main_v = QVBoxLayout(); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(0)
         
-        # Toolbar (Tek Parça Simgeler)
+        # Toolbar
         toolbar = QWidget(); toolbar.setFixedHeight(80); toolbar.setStyleSheet("background: white; border-bottom: 1px solid #d1d1d6;")
         t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(20, 5, 20, 5); t_lay.setSpacing(15)
         
         self.start_btn = self.create_nav_btn("▶", "Start")
+        self.settings_btn = self.create_nav_btn("⚙", "Settings")
         self.add_btn = self.create_nav_btn("＋", "Add Item")
-        t_lay.addStretch(); t_lay.addWidget(self.start_btn); t_lay.addWidget(self.add_btn)
+        
+        t_lay.addStretch(); t_lay.addWidget(self.start_btn); t_lay.addWidget(self.settings_btn); t_lay.addWidget(self.add_btn)
 
         # List Area
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -144,33 +183,53 @@ class MainWindow(QMainWindow):
         cw = QWidget(); cw.setLayout(main_v); self.setCentralWidget(cw)
 
         # Events
-        self.add_btn.clicked.connect(self.open_files); self.start_btn.clicked.connect(self.start_processing)
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_menu)
+        self.add_btn.clicked.connect(self.open_files)
+        self.start_btn.clicked.connect(self.start_processing)
+        self.settings_btn.clicked.connect(self.show_settings_menu)
         
-        # Delete Shortcut
-        del_act = QAction(self); del_act.setShortcut(QKeySequence("Backspace")); del_act.triggered.connect(self.remove_selected); self.addAction(del_act)
-
         self.threads = []; self.active_queue = []
+
+    def setup_menu(self):
+        menubar = self.menuBar()
+        # Fusion Menu
+        app_menu = menubar.addMenu("Fusion")
+        about_act = QAction("About Fusion", self); about_act.triggered.connect(self.show_about)
+        app_menu.addAction(about_act)
+        app_menu.addSeparator()
+        app_menu.addAction("Quit", self.close, QKeySequence("Ctrl+Q"))
+
+        # File Menu
+        file_menu = menubar.addMenu("File")
+        file_menu.addAction("Add Item...", self.open_files, QKeySequence("Ctrl+O"))
+        
+        # Edit Menu
+        edit_menu = menubar.addMenu("Edit")
+        edit_menu.addAction("Remove Selected", self.remove_selected, QKeySequence("Backspace"))
+
+    def show_about(self):
+        QMessageBox.about(self, "About Fusion", "Fusion v1.0\nHigh-performance media container optimizer for macOS.")
+
+    def show_settings_menu(self):
+        menu = QMenu(self)
+        ext_sub_act = QAction("Load External Subtitles", self)
+        ext_sub_act.setCheckable(True)
+        ext_sub_act.setChecked(self.load_external_subs)
+        ext_sub_act.triggered.connect(self.toggle_ext_subs)
+        menu.addAction(ext_sub_act)
+        menu.exec(self.settings_btn.mapToGlobal(QPoint(0, self.settings_btn.height())))
+
+    def toggle_ext_subs(self, state):
+        self.load_external_subs = state
 
     def create_nav_btn(self, icon, text):
         btn = QPushButton()
         btn.setFixedSize(60, 65)
         btn.setStyleSheet("QPushButton{border:none; background:transparent; border-radius:8px;} QPushButton:hover{background:#f0f0f0;}")
         l = QVBoxLayout(btn); l.setContentsMargins(0,5,0,5); l.setSpacing(0)
-        ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 24px; color: #333; border:none;")
-        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 11px; color: #666; border:none;")
-        ic.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        tx.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 24px; color: #333;")
+        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 11px; color: #666;")
         l.addWidget(ic); l.addWidget(tx)
         return btn
-
-    def show_menu(self, pos):
-        menu = QMenu(self)
-        menu.setStyleSheet("QMenu{background:white; border:1px solid #ccc;} QMenu::item:selected{background:#007aff; color:white;}")
-        rem = menu.addAction("Remove Selected")
-        rem.triggered.connect(self.remove_selected)
-        menu.exec(self.mapToGlobal(pos))
 
     def open_files(self):
         fs, _ = QFileDialog.getOpenFileNames(self, "Add Videos")
@@ -198,15 +257,14 @@ class MainWindow(QMainWindow):
             self.st_lbl.setText("Completed."); return
         item = self.active_queue.pop(0)
         item.set_status("working")
-        t = ConversionThread(item.full_path, item)
+        t = ConversionThread(item.full_path, item, self.load_external_subs)
         t.finished_signal.connect(self.on_done)
         self.threads.append(t); t.start()
 
     def on_done(self, t):
         t.widget.set_status("done")
-        total = len(self.container.items)
         done = len([i for i in self.container.items if i.status == "done"])
-        self.pb.setValue(int((done / total) * 100))
+        self.pb.setValue(int((done / len(self.container.items)) * 100))
         self.process_next()
 
     def dragEnterEvent(self, e):
