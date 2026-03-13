@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
         msg = QMessageBox(self)
         msg.setWindowTitle("About Fusion")
         # Developer kısmına kendi adını veya GitHub kullanıcı adını ekleyebilirsin
-        msg.setText("<b>Fusion</b><br>Version: 0.1.0<br>Developer: Your Name<br><br>"
+        msg.setText("<b>Fusion</b><br>Version: 0.1.0<br>Developer: Neptune<br><br>"
                     "High-performance media optimizer for Apple ecosystems.")
         msg.setInformativeText("Optimized for Infuse, Apple TV, and macOS.")
         msg.setIcon(QMessageBox.Icon.Information)
