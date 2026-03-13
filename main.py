@@ -18,26 +18,26 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Garantili İtalik Koruma Sistemi.
+        Manuel İtalik Koruma: FFmpeg müdahale etmeden önce etiketleri standartlaştırır.
         """
-        # 1. ASS/SSA formatındaki italikleri (\i1 ve {\i1}) SRT <i> etiketine çevir
+        # 1. ASS ve SSA italiklerini SRT formatına çevir
         text = re.sub(r'\{\\i1\}|\\i1|\\i(?![0-9a-zA-Z])', '<i>', text)
         text = re.sub(r'\{\\i0\}|\\i0', '</i>', text)
         
-        # 2. Bold (Kalın) kodlarını SİL
+        # 2. Bold (Kalın) kodlarını temizle
         text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+|<\s*b\s*>|<\s*/b\s*>|\[b\]|\[/b\]', '', text, flags=re.IGNORECASE)
         
-        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını temizle ({...})
+        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını sil ({...})
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. SRT formatında zaten var olabilecek hatalı etiketleri düzelt
+        # 4. SRT içindeki hatalı italik etiketlerini (büyük harf vb.) düzelt
         text = re.sub(r'<I\s*>', '<i>', text)
         text = re.sub(r'<\s*/I\s*>', '</i>', text)
         
-        # 5. Gereksiz HTML etiketlerini temizle (Sadece <i> kalsın)
+        # 5. Gereksiz HTML etiketlerini sil (Sadece <i> kalsın)
         text = re.sub(r'<(?!/?i>)[^>]*>', '', text)
         
-        # 6. Karakter temizliği
+        # 6. Temizlik sonrası karakter ve boşluk düzenleme
         text = text.replace('**', '').replace('__', '')
         text = re.sub(r' +', ' ', text)
         
@@ -83,26 +83,19 @@ class ConversionThread(QThread):
 
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
-            sub_file = f"int_{i}.srt"
-            temp_sub_path = os.path.join(temp_dir_path, sub_file)
+            # Dahili altyazıları ayıklarken 'srt' formatına zorlamak yerine ham metin olarak çekiyoruz
+            temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
             
-            # Etiketleri korumak için önce ham metni alıyoruz
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "copy", temp_sub_path + ".tmp"], 
+            # Ayıklama (Extraction): İtalikleri korumak için ham metin modunda çıkarıyoruz
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "text", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
-            tmp_p = temp_sub_path + ".tmp"
-            if os.path.exists(tmp_p):
-                with open(tmp_p, 'r', encoding='utf-8-sig', errors='ignore') as f:
-                    content = f.read()
-                cleaned = self.clean_subtitle_text(content)
-                with open(temp_sub_path, 'w', encoding='utf-8') as f: f.write(cleaned)
-                
-                # Etiketler güvenli hale geldikten sonra nihai SRT'ye çevir
-                subprocess.run([ffmpeg, '-y', '-i', temp_sub_path, "-c:s", "srt", temp_sub_path + "_f.srt"],
+            # Eğer text modu başarısız olursa srt olarak tekrar dene
+            if not os.path.exists(temp_sub_path) or os.path.getsize(temp_sub_path) == 0:
+                subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                if os.path.exists(temp_sub_path + "_f.srt"):
-                    shutil.move(temp_sub_path + "_f.srt", temp_sub_path)
-            
+
+            self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
         if self.load_external:
@@ -116,23 +109,35 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': temp_ext_sub, 'lang': lang})
 
-        # MUXING: Chapters ve Metadata Koruma
-        cmd = [ffmpeg, '-i', self.input_file]
-        for c in cleaned_list: cmd.extend(['-i', c['path']])
+        # MUXING AŞAMASI (Çıktı Dosyasının Garantilenmesi)
+        # Giriş dosyalarını ekle
+        cmd = [ffmpeg, '-y', '-i', self.input_file]
+        for c in cleaned_list: 
+            cmd.extend(['-i', c['path']])
+        
+        # Video ve Ses akışlarını eşle
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
         
+        # Altyazı akışlarını eşle ve metadata ata
         lang_map = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
+        # Video/Ses kopyala, Altyazı SRT olsun, Chapters'ı koru
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
-                    '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
+                    '-map_metadata', '0', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        shutil.rmtree(temp_dir_path, ignore_errors=True)
+        
+        # Geçici dosyaları temizle
+        if os.path.exists(temp_dir_path):
+            shutil.rmtree(temp_dir_path, ignore_errors=True)
+            
         self.finished_signal.emit(self)
+
+# --- GUI BİLEŞENLERİ (TAMAMEN KORUNDU) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
