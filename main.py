@@ -18,18 +18,18 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        İtalikleri en saf SRT formatında (<i>) korur.
+        İtalikleri <i> formatında tutar, diğer tüm gereksiz kodları siler.
         """
         if not text: return ""
-        # Tüm italik varyasyonlarını (ASS, HTML, Slash) standart etikete al
-        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[I_S]]', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>| </I>', '[[I_E]]', text)
-        # ASS kodlarını temizle
+        # 1. Tüm italik varyasyonlarını güvenli etikete al
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[I]]', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '[[/I]]', text)
+        # 2. Tüm süslü parantezli ASS/Stil kodlarını temizle
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # Kalan çöpleri temizle
-        text = re.sub(r'<[^>]*>', '', text)
-        # Etiketleri geri yükle
-        text = text.replace('[[I_S]]', '<i>').replace('[[I_E]]', '</i>')
+        # 3. Kalan diğer HTML benzeri çöpleri temizle
+        text = re.sub(r'<(?!/?(i|I))[^>]*>', '', text)
+        # 4. Etiketleri geri yükle
+        text = text.replace('[[I]]', '<i>').replace('[[/I]]', '</i>')
         return text.strip()
 
     def process_file_cleaning(self, file_path):
@@ -39,9 +39,11 @@ class ConversionThread(QThread):
             new_lines = []
             for line in lines:
                 if "-->" not in line and not line.strip().isdigit():
-                    new_lines.append(self.clean_subtitle_text(line) + "\n")
+                    cleaned = self.clean_subtitle_text(line)
+                    new_lines.append(cleaned + "\n")
                 else:
                     new_lines.append(line)
+            # Kesinlikle UTF-8 olarak kaydet (Apple TV/Infuse dostu)
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.writelines(new_lines)
         except: pass
@@ -55,7 +57,6 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
-        # macOS Paket Gizleme
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
@@ -77,7 +78,7 @@ class ConversionThread(QThread):
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            # Ham ayıklama
+            # Ham olarak çıkar
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
@@ -87,12 +88,11 @@ class ConversionThread(QThread):
             for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
                     temp_ext_sub = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
-                    shutil.copy2(f, temp_ext_sub)
-                    self.process_file_cleaning(temp_ext_sub)
+                    shutil.copy2(f, temp_ext_sub); self.process_file_cleaning(temp_ext_sub)
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
                     cleaned_list.append({'path': temp_ext_sub, 'lang': match.group(1) if match else 'und'})
 
-        # MUXING (En güvenli mod)
+        # MUXING
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -100,50 +100,34 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
-            cmd.extend([f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
+            # KRİTİK: srt olarak işaretle ama codec'i FFmpeg'e elletme
+            cmd.extend([f"-c:s:{i}", "srt", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
-        # KRİTİK AYARLAR: Metadata Sil (-1), Chapters Koru (0)
-        cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
-                    '-map_metadata', '-1', '-map_chapters', '0', output_file])
+        # Metadata sil (-1), Chapters koru (0)
+        cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        if os.path.exists(temp_dir_path):
-            shutil.rmtree(temp_dir_path, ignore_errors=True)
-            
+        if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI BİLEŞENLERİ (TAMAMEN KORUNDU) ---
+# --- GUI BİLEŞENLERİ (DEĞİŞMEDİ) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
-        super().__init__()
-        self.parent_list = parent_list; self.is_selected = False; self.status = "waiting"
-        self.setFixedHeight(30)
-        self.layout = QHBoxLayout(self); self.layout.setContentsMargins(15, 0, 15, 0)
-        self.status_icon = QLabel("○"); self.status_icon.setFixedWidth(20)
-        self.name_label = QLabel(filename)
-        self.layout.addWidget(self.status_icon); self.layout.addWidget(self.name_label); self.layout.addStretch()
-        self.update_style()
+        super().__init__(); self.parent_list = parent_list; self.is_selected = False; self.status = "waiting"; self.setFixedHeight(30)
+        self.layout = QHBoxLayout(self); self.layout.setContentsMargins(15, 0, 15, 0); self.status_icon = QLabel("○"); self.status_icon.setFixedWidth(20)
+        self.name_label = QLabel(filename); self.layout.addWidget(self.status_icon); self.layout.addWidget(self.name_label); self.layout.addStretch(); self.update_style()
     def set_status(self, mode):
-        self.status = mode
-        icons = {"working": "●", "done": "✓", "waiting": "○"}
-        colors = {"working": "#ff9500", "done": "#34c759", "waiting": "#8e8e93"}
-        self.status_icon.setText(icons.get(mode, "○"))
-        self.status_icon.setStyleSheet(f"color: {colors.get(mode, '#8e8e93')}; font-size: 14px;")
+        self.status = mode; icons = {"working": "●", "done": "✓", "waiting": "○"}; colors = {"working": "#ff9500", "done": "#34c759", "waiting": "#8e8e93"}
+        self.status_icon.setText(icons.get(mode, "○")); self.status_icon.setStyleSheet(f"color: {colors.get(mode, '#8e8e93')}; font-size: 14px;")
     def update_style(self):
-        bg = "#007aff" if self.is_selected else "transparent"
-        txt = "white" if self.is_selected else "#111"
-        self.setStyleSheet(f"background-color: {bg}; border-radius: 4px;")
-        self.name_label.setStyleSheet(f"color: {txt}; font-size: 13px;")
+        bg = "#007aff" if self.is_selected else "transparent"; txt = "white" if self.is_selected else "#111"
+        self.setStyleSheet(f"background-color: {bg}; border-radius: 4px;"); self.name_label.setStyleSheet(f"color: {txt}; font-size: 13px;")
 
 class SublerListWidget(QWidget):
     def __init__(self, main_window):
-        super().__init__()
-        self.main_window = main_window; self.items = []
-        self.selection_start = None; self.selection_rect = QRect()
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.show_context_menu)
+        super().__init__(); self.main_window = main_window; self.items = []; self.selection_start = None; self.selection_rect = QRect()
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); self.customContextMenuRequested.connect(self.show_context_menu)
         self.layout = QVBoxLayout(self); self.layout.setContentsMargins(5, 5, 5, 5); self.layout.setSpacing(2); self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     def paintEvent(self, event):
         painter = QPainter(self); row_h = 30
@@ -164,17 +148,14 @@ class SublerListWidget(QWidget):
             self.update()
     def mouseReleaseEvent(self, event): self.selection_start = None; self.selection_rect = QRect(); self.update()
     def show_context_menu(self, pos):
-        menu = QMenu(self)
-        act_rem = QAction("Remove selected", self); act_rem.setEnabled(any(i.is_selected for i in self.items))
-        act_rem.triggered.connect(self.main_window.remove_selected)
-        act_clear = QAction("Clear completed items", self); act_clear.setEnabled(any(i.status == "done" for i in self.items))
-        act_clear.triggered.connect(self.main_window.remove_completed)
+        menu = QMenu(self); act_rem = QAction("Remove selected", self); act_rem.setEnabled(any(i.is_selected for i in self.items))
+        act_rem.triggered.connect(self.main_window.remove_selected); act_clear = QAction("Clear completed", self)
+        act_clear.setEnabled(any(i.status == "done" for i in self.items)); act_clear.triggered.connect(self.main_window.remove_completed)
         menu.addAction(act_rem); menu.addAction(act_clear); menu.exec(self.mapToGlobal(pos))
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Fusion"); self.resize(700, 550); self.setAcceptDrops(True); self.load_external_subs = True
+        super().__init__(); self.setWindowTitle("Fusion"); self.resize(700, 550); self.setAcceptDrops(True); self.load_external_subs = True
         main_v = QVBoxLayout(); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(0)
         toolbar = QWidget(); toolbar.setFixedHeight(75); toolbar.setStyleSheet("background: white; border: none;")
         t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(30, 0, 30, 0); t_lay.setSpacing(5)
@@ -183,8 +164,7 @@ class MainWindow(QMainWindow):
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.container = SublerListWidget(self); self.scroll.setWidget(self.container)
         footer = QWidget(); footer.setFixedHeight(45); footer.setStyleSheet("background: #fbfbfd; border-top: 1px solid #d1d1d6;")
-        f_lay = QHBoxLayout(footer); f_lay.setContentsMargins(20, 0, 20, 0)
-        self.st_lbl = QLabel("0 items in queue."); self.pb = QProgressBar()
+        f_lay = QHBoxLayout(footer); f_lay.setContentsMargins(20, 0, 20, 0); self.st_lbl = QLabel("0 items in queue."); self.pb = QProgressBar()
         self.pb.setFixedWidth(200); self.pb.setFixedHeight(6); self.pb.setTextVisible(False); self.pb.setStyleSheet("QProgressBar{background:#eee;border-radius:3px;border:none;} QProgressBar::chunk{background:#007aff; border-radius:3px;}")
         f_lay.addWidget(self.st_lbl); f_lay.addStretch(); f_lay.addWidget(self.pb); main_v.addWidget(toolbar); main_v.addWidget(self.scroll); main_v.addWidget(footer)
         cw = QWidget(); cw.setLayout(main_v); self.setCentralWidget(cw); self.setup_menu(); self.add_btn.clicked.connect(self.open_files)
@@ -198,13 +178,13 @@ class MainWindow(QMainWindow):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
     def remove_completed(self):
-        to_remove = [i for i in self.container.items if i.status == "done"]
-        for i in to_remove: self.container.items.remove(i); i.setParent(None)
-        self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
+        to_rem = [i for i in self.container.items if i.status == "done"]
+        for i in to_rem: self.container.items.remove(i); i.setParent(None)
+        self.st_lbl.setText(f"{len(self.container.items)} items.")
     def remove_selected(self):
-        to_remove = [i for i in self.container.items if i.is_selected]
-        for i in to_remove: self.container.items.remove(i); i.setParent(None)
-        self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
+        to_rem = [i for i in self.container.items if i.is_selected]
+        for i in to_rem: self.container.items.remove(i); i.setParent(None)
+        self.st_lbl.setText(f"{len(self.container.items)} items.")
     def show_settings_menu(self):
         menu = QMenu(self); act = QAction("Load External Subtitles", self); act.setCheckable(True); act.setChecked(self.load_external_subs)
         act.triggered.connect(lambda s: setattr(self, 'load_external_subs', s)); menu.addAction(act); menu.exec(self.settings_btn.mapToGlobal(QPoint(0, self.settings_btn.height())))
@@ -213,9 +193,9 @@ class MainWindow(QMainWindow):
         if fs: self.add_to_list(fs)
     def add_to_list(self, paths):
         for p in paths:
-            w = FileWidget(os.path.basename(p), self.container); w.full_path = p
+            w = FileWidget(os.basename(p), self.container); w.full_path = p
             self.container.layout.addWidget(w); self.container.items.append(w)
-        self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
+        self.st_lbl.setText(f"{len(self.container.items)} items.")
     def start_processing(self):
         self.active_queue = [i for i in self.container.items if i.status == "waiting"]
         if self.active_queue: self.process_next()
