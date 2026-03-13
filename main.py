@@ -18,25 +18,26 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Nihai İtalik Koruma Sistemi.
+        Gelişmiş İtalik Koruma: FFmpeg'in sildiği tüm varyasyonları yakalar.
         """
-        # 1. TÜM İtalik varyasyonlarını maskele (FFmpeg'in silmemesi için)
+        # 1. İtalik işaretlerini zırhlı maskeye al
+        # ASS stili (\i1, {\i1}), SRT stili (<i>) ve FFmpeg kalıntılarını yakalar
         text = re.sub(r'\{\\i1\}|\\i1|\\i(?![0-9a-zA-Z])|<i\s*>|<I\s*>', '[[F_ITA_S]]', text)
         text = re.sub(r'\{\\i0\}|\\i0|<\s*/i\s*>|<\s*/I\s*>', '[[F_ITA_E]]', text)
         
-        # 2. Bold (Kalın) kodlarını SİL
+        # 2. Bold (Kalın) kodlarını temizle
         text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+|<\s*b\s*>|<\s*/b\s*>|\[b\]|\[/b\]', '', text, flags=re.IGNORECASE)
         
-        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını temizle ({...})
+        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını sil ({...})
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. Diğer tüm HTML etiketlerini temizle
+        # 4. Diğer tüm HTML etiketlerini (font, u vb.) sil
         text = re.sub(r'<[^>]*>', '', text)
         
-        # 5. Maskelenmiş italikleri standart SRT <i> etiketine geri çevir
+        # 5. Maskelenmiş italikleri standart SRT <i> formatına çevir
         text = text.replace('[[F_ITA_S]]', '<i>').replace('[[F_ITA_E]]', '</i>')
         
-        # 6. Gereksiz karakter temizliği
+        # 6. Gereksiz karakter ve çift boşluk temizliği
         text = text.replace('**', '').replace('__', '')
         text = re.sub(r' +', ' ', text)
         
@@ -84,7 +85,7 @@ class ConversionThread(QThread):
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
-            # İtalik etiketlerini maskelenmiş halde korumak için FFmpeg'i özel flag ile çalıştırıyoruz
+            # Kritik: FFmpeg'in italikleri silmemesi için 'sub_charenc' zorlaması yapıyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
