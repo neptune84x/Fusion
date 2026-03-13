@@ -20,21 +20,21 @@ class ConversionThread(QThread):
     def clean_and_force_srt_italics(self, text):
         """
         Metindeki tüm ASS kodlarını temizler ve 
-        çalışan örnekteki gibi tertemiz <i>etiketleri kurar.
+        çalışan örnekteki gibi tertemiz <i> etiketleri kurar.
         """
         if not text: return ""
-        # 1. Mevcut tüm italik varyasyonlarını temizle (iç içe geçmeyi önlemek için)
+        # 1. Mevcut tüm italik varyasyonlarını temizle
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         # 2. Diğer tüm teknik süslü parantezli ASS kodlarını sil
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # 3. Başa ve sona zorla italik koy
+        # 3. Başa ve sona zorla italik koy (Çalışan örnekteki format)
         return f"<i>{text.strip()}</i>"
 
     def process_ass_to_srt_with_italics(self, ass_path, srt_output_path):
         """
         ASS dosyasını manuel tarar, 'Italics' stilindeki satırları 
-        bulup <i> etiketiyle SRT formatına çevirir.
+        yakalayıp <i> etiketiyle SRT formatına çevirir.
         """
         try:
             with open(ass_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
@@ -45,19 +45,18 @@ class ConversionThread(QThread):
             
             for line in lines:
                 if line.startswith("Dialogue:"):
-                    # ASS satır yapısı: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     parts = line.split(',', 9)
                     if len(parts) >= 10:
-                        start_time = parts[1].replace('.', ',') + "0" # SRT milisaniye uyumu
+                        # Zaman damgasını SRT formatına (00:00:00,000) çevir
+                        start_time = parts[1].replace('.', ',') + "0"
                         end_time = parts[2].replace('.', ',') + "0"
                         style = parts[3]
                         text = parts[9].strip()
                         
-                        # Eğer stil 'Italics' ise veya metin içinde {\i1} varsa
+                        # Stil 'Italics' ise veya metin içinde {\i1} etiketi varsa zorla uygula
                         if "italic" in style.lower() or "{\\i1}" in text:
                             text = self.clean_and_force_srt_italics(text)
                         else:
-                            # Normal satır temizliği (etiketleri siler)
                             text = re.sub(r'\{[^\}]*\}', '', text).strip()
                         
                         if text:
@@ -67,7 +66,6 @@ class ConversionThread(QThread):
             with open(srt_output_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(srt_content)
         except:
-            # Hata durumunda FFmpeg fallback
             ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
             subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -102,15 +100,13 @@ class ConversionThread(QThread):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # 2. DIŞ ALTYAZILAR (Özel İtalik Korumalı Dönüşüm)
+        # 2. DIŞ ALTYAZILAR (İncelediğimiz yönteme göre dönüştürülür)
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 ext_check = f.lower()
                 if (ext_check.endswith('.srt') or ext_check.endswith('.ass')) and f != self.input_file:
                     temp_ext_path = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
-                    
                     if ext_check.endswith('.ass'):
-                        # Manuel italik enjeksiyonu ve SRT dönüşümü
                         self.process_ass_to_srt_with_italics(f, temp_ext_path)
                     else:
                         shutil.copy2(f, temp_ext_path)
@@ -134,7 +130,6 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# (GUI Sınıfları FileWidget, SublerListWidget, MainWindow tamamen aynı kalarak ilerleme korunur)
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
@@ -201,6 +196,10 @@ class MainWindow(QMainWindow):
     def setup_menu(self):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
+        # Edit Menüsünü Geri Getirdim
+        em = mb.addMenu("Edit")
+        a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence.Delete); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem)
+        a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
     def remove_completed(self):
         to_rem = [i for i in self.container.items if i.status == "done"]
         for i in to_rem: self.container.items.remove(i); i.setParent(None)
