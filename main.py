@@ -17,29 +17,36 @@ class ConversionThread(QThread):
         self.load_external = load_external
 
     def clean_subtitle_text(self, text):
+        """
+        İtalikleri en agresif ve silinemez SRT formatında korur.
+        Özellikle 'Fark ettilerse' gibi kelimeleri korumak için.
+        """
         if not text: return ""
-        # İtalikleri güvenli anahtara al (SRT/Infuse uyumlu)
-        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[I]]', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '[[/I]]', text)
-        # ASS kodlarını temizle
+        # 1. Her türlü italik kodunu (ASS/HTML) standart <i> formatına çek
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', text)
+        
+        # 2. ASS kodlarını ve diğer HTML etiketlerini tamamen süpür (İtalik hariç)
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # Gereksiz HTML temizle
-        text = re.sub(r'<(?!/?(i|I))[^>]*>', '', text)
-        # Etiketleri geri yükle
-        text = text.replace('[[I]]', '<i>').replace('[[/I]]', '</i>')
+        text = re.sub(r'<(?!/?i)[^>]*>', '', text)
+        
+        # 3. Boşlukları ve gereksiz satır başlarını temizle
         return text.strip()
 
     def process_file_cleaning(self, file_path):
         try:
+            # UTF-8 with BOM (Apple'ın en sevdiği SRT varyasyonu)
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
             new_lines = []
             for line in lines:
                 if "-->" not in line and not line.strip().isdigit():
-                    new_lines.append(self.clean_subtitle_text(line) + "\n")
+                    cleaned = self.clean_subtitle_text(line)
+                    if cleaned:
+                        new_lines.append(cleaned + "\n")
                 else:
                     new_lines.append(line)
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(new_lines)
         except: pass
 
@@ -72,7 +79,8 @@ class ConversionThread(QThread):
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub_path], 
+            # FFmpeg ile altyazıyı ham metin olarak dışarı al
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
@@ -86,6 +94,7 @@ class ConversionThread(QThread):
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
                     cleaned_list.append({'path': temp_ext_sub, 'lang': match.group(1) if match else 'und'})
 
+        # MUXING ADIMI
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -93,12 +102,17 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
+            # KRİTİK: Altyazı codec'ini 'text' (ham srt) olarak işaretliyoruz
             cmd.extend([f"-c:s:{i}", "srt", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
+        # Bölümleri (Chapters) koru, global gereksiz metadatayı sil
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
+        
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
+
+# --- GUI (Sürükle-Bırak Çökme Hatası Giderilmiş Hali) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
@@ -192,7 +206,6 @@ class MainWindow(QMainWindow):
         if fs: self.add_to_list(fs)
     def add_to_list(self, paths):
         for p in paths:
-            # os.path.basename düzeltildi (çökme sebebi buydu)
             w = FileWidget(os.path.basename(p), self.container); w.full_path = p
             self.container.layout.addWidget(w); self.container.items.append(w)
         self.st_lbl.setText(f"{len(self.container.items)} items.")
