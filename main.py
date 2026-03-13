@@ -18,29 +18,28 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Garantili İtalik Koruma ve Bold Temizliği.
+        ASS ve SRT formatlarındaki italikleri (i1, i) korur, boldları (b1, b) siler.
         """
-        # 1. TÜM İtalik varyasyonlarını maskele (Silinmemesi için)
-        # <i>, {\i1}, {\i}, \i1, \i kodlarının hepsini yakalar
-        text = re.sub(r'<(i|I)>|\\\{\\i[1]?\}|\\i1|\\i(?![a-zA-Z0-9])', '[[F_ITA_S]]', text)
-        text = re.sub(r'</(i|I)>|\\\{\\i0\}|\\i0', '[[F_ITA_E]]', text)
+        # 1. İTALİK KORUMA: {\i1}, \i1, <i>, [i] varyasyonlarını yakala
+        # Regex: Süslü parantez içindeki veya çıplak \i1 ve \i0 yapılarını maskeler
+        text = re.sub(r'\{\\i1\}|\\i1|<\s*i\s*>|\[i\]', '[[F_ITA_S]]', text)
+        text = re.sub(r'\{\\i0\}|\\i0|<\s*/i\s*>|\[/i\]', '[[F_ITA_E]]', text)
         
-        # 2. Bold (Kalın) kodlarını her formatta sil
-        # <b>, {\b1}, \b1 vb.
-        text = re.sub(r'<(b|B)>|</(b|B)>|\[b\]|\[/b\]', '', text)
-        text = re.sub(r'\{\\b[0-9]\}|\\b[0-9]', '', text)
+        # 2. BOLD SİLME: {\b1}, \b1, <b>, [b] varyasyonlarını temizle
+        text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+|<\s*b\s*>|<\s*/b\s*>|\[b\]|\[/b\]', '', text)
         
-        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını temizle ({...})
+        # 3. DİĞER STİLLERİ SİL: Geri kalan tüm {...} yapılarını (renk, font vb.) temizle
+        # İtalikler maskelendiği için bu aşamada silinmezler
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. Diğer tüm HTML etiketlerini (font, u, s vb.) temizle
+        # 4. GENEL TEMİZLİK: Diğer HTML benzeri etiketleri sil
         text = re.sub(r'<[^>]*>', '', text)
         
-        # 5. Maskelenmiş italikleri standart SRT italik etiketine çevir
+        # 5. İTALİKLERİ GERİ YÜKLE: Standart SRT formatına dönüştür
         text = text.replace('[[F_ITA_S]]', '<i>')
         text = text.replace('[[F_ITA_E]]', '</i>')
         
-        # 6. Markdown bold kalıntılarını sil (** veya __)
+        # 6. Markdown kalıntılarını temizle
         text = text.replace('**', '').replace('__', '')
         
         return text.strip()
@@ -65,9 +64,7 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
-        # GÖRSELDEKİ UYARIYI ENGELLEMEK İÇİN: 
-        # SetFile yerine macOS'un yerleşik AppleScript altyapısını kullanarak paket gibi gösteriyoruz.
-        # Bu yöntem Xcode araçları gerektirmez.
+        # Paket görünümü (osascript ile Xcode uyarısı vermeden)
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
@@ -90,6 +87,7 @@ class ConversionThread(QThread):
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
+            # Sökerken srt'ye zorlayarak format karmaşasını azaltıyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
@@ -120,7 +118,6 @@ class ConversionThread(QThread):
         shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI Sınıfları (MainWindow, FileWidget vb.) ---
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
