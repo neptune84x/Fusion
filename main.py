@@ -1,4 +1,4 @@
-import sys, os, subprocess, json, glob, re
+import sys, os, subprocess, json, glob, re, shutil
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                                  QWidget, QLabel, QProgressBar, QScrollArea, 
@@ -16,75 +16,92 @@ class ConversionThread(QThread):
         self.widget = widget
         self.load_external = load_external
 
-    def clean_srt_content(self, srt_path):
-        """SRT dosyasındaki italik (<i>) hariç tüm HTML ve stil etiketlerini temizler."""
+    def clean_srt_text(self, text):
+        """Metin içindeki italik hariç tüm etiketleri temizler."""
+        # İtalikleri korumaya al
+        text = re.sub(r'<(i|I)>', '[[i]]', text)
+        text = re.sub(r'</(i|I)>', '[[/i]]', text)
+        # Bold, Underline ve tüm diğer HTML etiketlerini sil
+        text = re.sub(r'<[^>]*>', '', text)
+        # Süslü parantez stil kodlarını sil ({b1}, {pos...} vb.)
+        text = re.sub(r'\{[^\}]*\}', '', text)
+        # İtalikleri geri yükle
+        text = text.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
+        return text
+
+    def clean_file(self, file_path):
         try:
-            if not os.path.exists(srt_path): return
-            with open(srt_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-
-            # İtalikleri korumaya al (Küçük ve büyük harf duyarlı)
-            content = content.replace('<i>', '[[i]]').replace('</i>', '[[/i]]')
-            content = content.replace('<I>', '[[i]]').replace('</I>', '[[/i]]')
-
-            # Tüm HTML etiketlerini (<...>) ve süslü parantez stil kodlarını ({...}) sil
-            content = re.sub(r'<[^>]*>', '', content)
-            content = re.sub(r'\{[^\}]*\}', '', content)
-
-            # İtalikleri geri yükle
-            content = content.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
-            
-            with open(srt_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-        except Exception as e:
-            print(f"Subtitle cleaning error: {e}")
-
-    def run(self):
-        ffmpeg_path = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
-        ffprobe_path = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
-        base_path = os.path.splitext(self.input_file)[0]
-        output_file = f"{base_path}_Fusion.mkv"
-        
-        probe_cmd = [ffprobe_path, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
-        source_langs = {"audio": [], "subtitle": []}
-        try:
-            probe_data = json.loads(subprocess.check_output(probe_cmd))
-            for s in probe_data.get('streams', []):
-                lang = s.get('tags', {}).get('language', 'und')
-                if s['codec_type'] == 'audio': source_langs['audio'].append(lang)
-                if s['codec_type'] == 'subtitle': source_langs['subtitle'].append(lang)
+            cleaned = self.clean_srt_text(content)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(cleaned)
         except: pass
 
+    def run(self):
+        ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
+        ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
+        
+        base_path = os.path.splitext(self.input_file)[0]
+        temp_dir = f"{base_path}_temp"
+        os.makedirs(temp_dir, exist_ok=True)
+        output_file = f"{base_path}_Fusion.mkv"
+
+        # 1. Analiz
+        probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
+        info = json.loads(subprocess.check_output(probe_cmd))
+        
+        audio_count = 0
+        internal_subs = []
+        for s in info.get('streams', []):
+            if s['codec_type'] == 'audio': audio_count += 1
+            if s['codec_type'] == 'subtitle':
+                lang = s.get('tags', {}).get('language', 'und')
+                internal_subs.append({'index': s['index'], 'lang': lang})
+
+        # 2. İç Altyazıları Dışarı Çıkar ve Temizle
+        cleaned_internal_paths = []
+        for i, sub in enumerate(internal_subs):
+            temp_sub = os.path.join(temp_dir, f"int_{i}.srt")
+            # Dahili altyazıyı SRT olarak dışarı aktar
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub], 
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.clean_file(temp_sub)
+            cleaned_internal_paths.append({'path': temp_sub, 'lang': sub['lang']})
+
+        # 3. Dış Altyazıları Bul ve Temizle
         ext_subs = []
         if self.load_external:
-            subs = glob.glob(f"{base_path}*.*")
-            ext_subs = [s for s in subs if s.lower().endswith(('.srt', '.ass')) and s != self.input_file]
-            for s in ext_subs:
-                if s.lower().endswith('.srt'): self.clean_srt_content(s)
+            for f in glob.glob(f"{base_path}*.*"):
+                if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
+                    self.clean_file(f)
+                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
+                    lang = match.group(1) if match else 'und'
+                    ext_subs.append({'path': f, 'lang': lang})
 
-        cmd = [ffmpeg_path, '-i', self.input_file]
-        for sub in ext_subs: cmd.extend(['-i', sub])
-        
-        cmd.extend(['-map', '0:v', '-map', '0:a?', '-map', '0:s?'])
-        for i in range(len(ext_subs)): cmd.extend(['-map', str(i + 1)])
-        cmd.extend(['-map_metadata', '-1', '-map_chapters', '0'])
+        # 4. Final Birleştirme (Muxing)
+        # Sadece Video ve Sesleri ana dosyadan al, altyazıları temizlediğimiz dosyalardan al
+        cmd = [ffmpeg, '-i', self.input_file]
+        for s in cleaned_internal_paths: cmd.extend(['-i', s['path']])
+        for s in ext_subs: cmd.extend(['-i', s['path']])
 
-        lang_codes = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
-        for i, lang in enumerate(source_langs['audio']):
-            cmd.extend([f'-metadata:s:a:{i}', f'language={lang}'])
-        for i, lang in enumerate(source_langs['subtitle']):
-            cmd.extend([f'-metadata:s:s:{i}', f'language={lang}'])
+        cmd.extend(['-map', '0:v', '-map', '0:a?']) # Video ve Sesler orijinalden
         
-        start_idx = len(source_langs['subtitle'])
-        for i, sub_path in enumerate(ext_subs):
-            match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', sub_path.lower())
-            lang = match.group(1) if match else 'und'
-            cmd.extend([f'-metadata:s:s:{start_idx + i}', f'language={lang_codes.get(lang, lang)}'])
+        # Tüm temizlenmiş altyazıları sırayla ekle
+        all_cleaned = cleaned_internal_paths + ext_subs
+        lang_map = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
+        
+        for i, sub in enumerate(all_cleaned):
+            cmd.extend(['-map', str(i + 1)])
+            l_code = lang_map.get(sub['lang'], sub['lang'])
+            cmd.extend([f'-metadata:s:s:{i}', f'language={l_code}'])
 
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', '-y', output_file])
         
-        try: subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except: pass
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Temizlik
+        shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
 class FileWidget(QFrame):
@@ -215,9 +232,11 @@ class MainWindow(QMainWindow):
         app_menu.addAction(about_act); app_menu.addSeparator()
         quit_act = QAction("Quit", self); quit_act.setShortcut(QKeySequence("Ctrl+Q")); quit_act.triggered.connect(self.close)
         app_menu.addAction(quit_act)
+
         file_menu = menubar.addMenu("File")
         add_act = QAction("Add Item...", self); add_act.setShortcut(QKeySequence("Ctrl+O")); add_act.triggered.connect(self.open_files)
         file_menu.addAction(add_act)
+        
         edit_menu = menubar.addMenu("Edit")
         rem_sel_act = QAction("Remove Selected", self); rem_sel_act.setShortcut(QKeySequence("Backspace")); rem_sel_act.triggered.connect(self.remove_selected)
         edit_menu.addAction(rem_sel_act)
