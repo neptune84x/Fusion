@@ -16,31 +16,44 @@ class ConversionThread(QThread):
         self.widget = widget
         self.load_external = load_external
 
-    def clean_subtitle_text(self, text):
+    def fix_ass_italics(self, text):
         """
-        Apple cihazları ve Infuse için italikleri mov_text uyumlu hale getirir.
+        ASS formatındaki karmaşık italik kodlarını (\i1, \i0) 
+        Infuse'un sevdiği <i> ve </i> etiketlerine manuel çevirir.
         """
         if not text: return ""
-        # 1. Tüm italik varyasyonlarını standart <i> formatına çek
-        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', text)
-        # 2. ASS ve diğer süslü parantezli kodları tamamen sil
+        # 1. ASS stili italik açma/kapama kodlarını SRT stiline çevir
+        text = re.sub(r'\{\\i1\}|\\i1', '<i>', text)
+        text = re.sub(r'\{\\i0\}|\\i0', '</i>', text)
+        
+        # 2. Standart HTML italiklerini koru (ihtimal dahilinde)
+        text = re.sub(r'<I>', '<i>', text)
+        text = re.sub(r'</I>', '</i>', text)
+
+        # 3. Kalan diğer tüm ASS süslü parantez kodlarını ({...}) temizle
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # 3. Diğer HTML etiketlerini temizle (sadece <i> kalsın)
+        
+        # 4. İtalik dışındaki diğer HTML taglerini temizle
         text = re.sub(r'<(?!/?i)[^>]*>', '', text)
+        
         return text.strip()
 
     def process_file_cleaning(self, file_path):
         try:
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
+            
             new_lines = []
             for line in lines:
+                # Zaman damgası veya sıra numarası satırı değilse temizliğe gir
                 if "-->" not in line and not line.strip().isdigit():
-                    cleaned = self.clean_subtitle_text(line)
-                    new_lines.append(cleaned + "\n")
+                    cleaned = self.fix_ass_italics(line)
+                    if cleaned:
+                        new_lines.append(cleaned + "\n")
                 else:
                     new_lines.append(line)
+            
+            # Infuse'un tanıması için BOM'lu UTF-8 ile kaydet
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(new_lines)
         except: pass
@@ -68,7 +81,7 @@ class ConversionThread(QThread):
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
         cleaned_list = []
-        # İç altyazıları mov_text uyumlu SRT olarak hazırla
+        # --- İÇ ALTYAZILAR ---
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
@@ -76,18 +89,23 @@ class ConversionThread(QThread):
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # Harici (External) altyazıları dahil et
+        # --- DIŞ (EXTERNAL) ALTYAZILAR ---
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 ext_check = f.lower()
+                # Film dosyasıyla aynı isimdeki srt veya ass'leri topla
                 if (ext_check.endswith('.srt') or ext_check.endswith('.ass')) and f != self.input_file:
                     temp_ext_path = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
-                    shutil.copy2(f, temp_ext_path)
+                    # FFmpeg ile önce standart srt'ye çıkarıyoruz (ASS etiketleri genellikle kalır)
+                    subprocess.run([ffmpeg, '-y', '-i', f, '-f', 'srt', temp_ext_path], 
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # Ardından ASS italiklerini manuel olarak SRT italiklerine çeviriyoruz
                     self.process_file_cleaning(temp_ext_path)
+                    
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext_check)
                     cleaned_list.append({'path': temp_ext_path, 'lang': match.group(1) if match else 'und'})
 
-        # MUXING (Apple Native mov_text Dönüşümü)
+        # MUXING (Chapters ve Metadata korumalı)
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -95,10 +113,9 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
-            # KRİTİK: Apple ekosistemi için altyazıları 'mov_text' formatına zorluyoruz
-            cmd.extend([f"-c:s:{i}", "mov_text", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
+            # SubRip etiketi Infuse için en güvenli yoldur
+            cmd.extend([f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
-        # Bölümleri (Chapters) Koru, Metadatayı Sil
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -106,6 +123,7 @@ class ConversionThread(QThread):
         self.finished_signal.emit(self)
 
 # --- GUI BİLEŞENLERİ ---
+# (Buradaki FileWidget, SublerListWidget ve MainWindow sınıfları önceki hatasız halleriyle kalmalı)
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
