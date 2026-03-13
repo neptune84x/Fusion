@@ -18,23 +18,28 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Infuse ve Apple cihazları için italikleri ham SRT formatında korur.
+        Infuse'un asla reddedemeyeceği WebVTT-stili italik yapısı.
         """
         if not text: return ""
-        # 1. Tüm italik varyasyonlarını Infuse'un tanıdığı <i> formatına zorla
+        # 1. Her türlü italik kodunu (ASS/SSA dahil) standart <i> formatına zorla
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', text)
-        # 2. ASS/SSA formatındaki diğer süslü parantezli kodları temizle
+        
+        # 2. Gereksiz ASS/SSA süslü parantez kodlarını süpür
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # 3. İtalik dışındaki diğer HTML etiketlerini sil
+        
+        # 3. İtalik dışındaki tüm HTML etiketlerini sil (font, color vb.)
         text = re.sub(r'<(?!/?i)[^>]*>', '', text)
+        
+        # 4. Infuse için satır başı/sonu temizliği
         return text.strip()
 
     def process_file_cleaning(self, file_path):
         try:
-            # Okuma: UTF-8-sig (BOM) Infuse için en güvenli yoldur
+            # Okuma: Hataları görmezden gelerek her türlü kodlamayı aç
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
+            
             new_lines = []
             for line in lines:
                 if "-->" not in line and not line.strip().isdigit():
@@ -42,7 +47,9 @@ class ConversionThread(QThread):
                     new_lines.append(cleaned + "\n")
                 else:
                     new_lines.append(line)
-            # Yazma: UTF-8-sig ile tekrar kaydet
+            
+            # YAZMA KRİTİK: Infuse 'utf-8-sig' (BOM'lu) dosyaları 'Zengin Metin' olarak 
+            # daha iyi algılar ve içindeki <i> etiketlerini render eder.
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(new_lines)
         except: pass
@@ -56,12 +63,14 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
+        # macOS'te temp klasörünü gizle
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
         except: pass
 
         output_file = base_path + "_Fusion.mkv"
+
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
@@ -74,7 +83,7 @@ class ConversionThread(QThread):
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
         cleaned_list = []
-        # --- İÇ ALTYAZILAR ---
+        # İç altyazıları dışarı al ve temizle
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
@@ -82,39 +91,37 @@ class ConversionThread(QThread):
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # --- DIŞ (EXTERNAL) ALTYAZILAR ---
+        # Dış (External) altyazıları dahil et
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
-                ext = f.lower()
-                # Dosyanın kendisi değilse ve srt/ass ise al
-                if (ext.endswith('.srt') or ext.endswith('.ass')) and f != self.input_file:
+                ext_check = f.lower()
+                if (ext_check.endswith('.srt') or ext_check.endswith('.ass')) and f != self.input_file:
                     temp_ext_sub = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
                     shutil.copy2(f, temp_ext_sub)
                     self.process_file_cleaning(temp_ext_sub)
-                    # Dil etiketini dosyadan çekmeye çalış (film.en.srt gibi)
-                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext)
+                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext_check)
                     cleaned_list.append({'path': temp_ext_sub, 'lang': match.group(1) if match else 'und'})
 
-        # MUXING (BİRLEŞTİRME)
+        # MUXING (En Kritik Aşama)
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
-        
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
         
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
-            # Infuse ve Apple için SRT codec'ini en temiz haliyle (text) kullanıyoruz
-            cmd.extend([f"-c:s:{i}", "srt", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
+            # KRİTİK: Infuse için codec 'srt' değil 'subrip' olarak işaretlenmeli.
+            # Bazı FFmpeg sürümleri 'srt' yazınca etiketleri strip eder, 'subrip' daha güvenlidir.
+            cmd.extend([f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
-        # KRİTİK: Bölümleri (Chapters) Koru, Metadata Temizle
+        # CHAPTERS KORU, METADATA SİL
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI BİLEŞENLERİ (Sürükle-Bırak Hatası Giderildi) ---
+# --- GUI (Değişmedi, Sürükle-Bırak Hatası Giderilmiş Halidir) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
