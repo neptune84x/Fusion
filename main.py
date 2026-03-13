@@ -17,35 +17,38 @@ class ConversionThread(QThread):
         self.load_external = load_external
 
     def clean_srt_text(self, text):
-        """Metin içindeki italik hariç tüm etiketleri temizler."""
-        # 1. İtalikleri korumaya al
+        """Metin içindeki italik hariç her şeyi temizler."""
+        # İtalikleri korumaya al (Küçük/Büyük harf duyarlı)
         text = re.sub(r'<(i|I)>', '[[i]]', text)
         text = re.sub(r'</(i|I)>', '[[/i]]', text)
-        # 2. Bold, Underline, Color ve tüm diğer HTML benzeri etiketleri sil
+        
+        # Tüm HTML etiketlerini sil (<b...>, <font...>, <u...>)
         text = re.sub(r'<[^>]*>', '', text)
-        # 3. Süslü parantez stil kodlarını sil ({b1}, {pos...} vb.)
+        
+        # Süslü parantez stil kodlarını sil ({b1}, {pos...}, {c&H...})
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # 4. İtalikleri geri yükle
+        
+        # İtalikleri geri yükle
         text = text.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
         return text
 
     def process_file_cleaning(self, file_path):
+        """Fiziksel SRT dosyasını temizler."""
         try:
             if not os.path.exists(file_path): return
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            cleaned_content = self.clean_srt_text(content)
+            cleaned = self.clean_srt_text(content)
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(cleaned_content)
+                f.write(cleaned)
         except: pass
 
     def run(self):
-        # PyInstaller kaynak yönetimi
         ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         
         base_path = os.path.splitext(self.input_file)[0]
-        temp_dir = f"{base_path}_fusion_temp"
+        temp_dir = f"{base_path}_fusion_tmp"
         os.makedirs(temp_dir, exist_ok=True)
         output_file = f"{base_path}_Fusion.mkv"
 
@@ -61,14 +64,14 @@ class ConversionThread(QThread):
                 lang = s.get('tags', {}).get('language', 'und')
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
-        # 2. Dahili Altyazıları Dışarı Çıkar ve Temizle
-        cleaned_files = []
+        # 2. Dahili Altyazıları Çıkar ve Temizle
+        cleaned_list = []
         for i, sub in enumerate(internal_subs):
             temp_sub = os.path.join(temp_dir, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub)
-            cleaned_files.append({'path': temp_sub, 'lang': sub['lang']})
+            cleaned_list.append({'path': temp_sub, 'lang': sub['lang']})
 
         # 3. Harici Altyazıları Temizle
         if self.load_external:
@@ -77,23 +80,22 @@ class ConversionThread(QThread):
                     self.process_file_cleaning(f)
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
                     lang = match.group(1) if match else 'und'
-                    cleaned_files.append({'path': f, 'lang': lang})
+                    cleaned_list.append({'path': f, 'lang': lang})
 
-        # 4. Final Muxing
+        # 4. Muxing
         cmd = [ffmpeg, '-i', self.input_file]
-        for cf in cleaned_files: cmd.extend(['-i', cf['path']])
+        for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
         
         lang_map = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
-        for i, cf in enumerate(cleaned_files):
+        for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
-            l_code = lang_map.get(cf['lang'], cf['lang'])
-            cmd.extend([f'-metadata:s:s:{i}', f'language={l_code}'])
+            l_code = lang_map.get(c['lang'], c['lang'])
+            cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}"])
 
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', '-y', output_file])
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         
-        # Temizlik
         shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
@@ -165,12 +167,11 @@ class SublerListWidget(QWidget):
 
     def show_context_menu(self, pos):
         menu = QMenu(self)
-        selected_items = [i for i in self.items if i.is_selected]
-        if selected_items:
+        if any(i.is_selected for i in self.items):
             rem_sel = QAction("Remove selected", self)
             rem_sel.triggered.connect(self.main_window.remove_selected)
             menu.addAction(rem_sel)
-        rem_comp = QAction("Remove completed items", self)
+        rem_comp = QAction("Remove completed", self)
         rem_comp.triggered.connect(self.main_window.remove_completed)
         menu.addAction(rem_comp)
         menu.exec(self.mapToGlobal(pos))
@@ -213,18 +214,16 @@ class MainWindow(QMainWindow):
         btn = QPushButton(); btn.setFixedSize(60, 65); btn.setStyleSheet("QPushButton{border:none; background:transparent;} QPushButton:hover{background:#f5f5f7; border-radius:10px;}")
         l = QVBoxLayout(btn); l.setContentsMargins(0,0,0,0); l.setSpacing(0)
         ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 26px; color: #1d1d1f;")
-        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 10px; color: #1d1d1f; font-weight: 500; margin-top: -2px;")
+        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 10px; color: #1d1d1f; font-weight: 500;")
         l.addWidget(ic); l.addWidget(tx); return btn
 
     def setup_menu(self):
         menubar = self.menuBar()
         app_menu = menubar.addMenu("Fusion")
-        about_act = QAction("About Fusion", self); about_act.triggered.connect(self.show_about); app_menu.addAction(about_act)
-        quit_act = QAction("Quit", self); quit_act.setShortcut(QKeySequence("Ctrl+Q")); quit_act.triggered.connect(self.close); app_menu.addAction(quit_act)
+        app_menu.addAction("About", self.show_about)
+        app_menu.addAction("Quit", self.close, QKeySequence("Ctrl+Q"))
         file_menu = menubar.addMenu("File")
-        add_act = QAction("Add Item...", self); add_act.setShortcut(QKeySequence("Ctrl+O")); add_act.triggered.connect(self.open_files); file_menu.addAction(add_act)
-        edit_menu = menubar.addMenu("Edit")
-        rem_sel_act = QAction("Remove Selected", self); rem_sel_act.setShortcut(QKeySequence("Backspace")); rem_sel_act.triggered.connect(self.remove_selected); edit_menu.addAction(rem_sel_act)
+        file_menu.addAction("Add Item...", self.open_files, QKeySequence("Ctrl+O"))
 
     def remove_completed(self):
         to_remove = [i for i in self.container.items if i.status == "done"]
@@ -236,7 +235,7 @@ class MainWindow(QMainWindow):
         for i in to_remove: self.container.items.remove(i); i.setParent(None)
         self.st_lbl.setText(f"{len(self.container.items)} items in queue.")
 
-    def show_about(self): QMessageBox.about(self, "About Fusion", "Fusion v1.0\nHigh-performance media optimizer for macOS.")
+    def show_about(self): QMessageBox.about(self, "About Fusion", "Fusion v1.0\nHigh-performance media optimizer.")
     def show_settings_menu(self):
         menu = QMenu(self)
         ext_sub_act = QAction("Load External Subtitles", self); ext_sub_act.setCheckable(True); ext_sub_act.setChecked(self.load_external_subs)
