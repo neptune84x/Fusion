@@ -17,34 +17,27 @@ class ConversionThread(QThread):
         self.load_external = load_external
 
     def clean_subtitle_text(self, text):
-        """Her türlü Bold, Stil ve Renk kodunu kazır, SADECE italikleri bırakır."""
-        # 1. İtalikleri geçici olarak koru
-        text = re.sub(r'<(i|I)>', '[[i]]', text)
-        text = re.sub(r'</(i|I)>', '[[/i]]', text)
+        """Boldları siler, İTALİKLERİ kesin olarak korur."""
+        # 1. İtalik varyasyonlarını maskele (Silinmemeleri için)
+        text = re.sub(r'<(i|I)>', '[[IS]]', text)
+        text = re.sub(r'</(i|I)>', '[[IE]]', text)
+        text = re.sub(r'\{\\i1\}', '[[IS]]', text)
+        text = re.sub(r'\{\\i0\}', '[[IE]]', text)
         
-        # 2. Bold (Kalın) ifadelerini her formatta sil: <b>, {b1}, {\b1}, {\b}
+        # 2. Bold (Kalın) etiketlerini temizle (<b>, {\b1}, \b1, [b])
         text = re.sub(r'<(b|B)>|</(b|B)>', '', text)
-        text = re.sub(r'\\b[0-1]', '', text) 
-        text = re.sub(r'\{b[0-1]\}', '', text)
+        text = re.sub(r'\{\\b[0-9]\}', '', text)
+        text = re.sub(r'\\b[0-9]', '', text)
         
-        # 3. ASS/SSA stil tanımlarını temizle (Satır başındaki 'Style:' blokları dahil)
-        lines = []
-        for line in text.splitlines():
-            if line.startswith('Style:') or line.startswith('Format:'):
-                continue
-            # Süslü parantez içindeki her şeyi (renk, pozisyon, bold) sil
-            line = re.sub(r'\{[^\}]*\}', '', line)
-            lines.append(line)
-        text = "\n".join(lines)
-
-        # 4. Diğer tüm HTML etiketlerini ve Markdown boldlarını sil
+        # 3. Kalan tüm süslü parantez stil kodlarını sil ({...})
+        text = re.sub(r'\{[^\}]*\}', '', text)
+        
+        # 4. Diğer tüm HTML benzeri etiketleri temizle (<font>, <u> vb.)
         text = re.sub(r'<[^>]*>', '', text)
-        text = text.replace('**', '').replace('__', '')
         
-        # 5. İtalikleri standart SRT formatında geri getir
-        text = text.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
+        # 5. İtalikleri standart SRT formatına (<i></i>) geri döndür
+        text = text.replace('[[IS]]', '<i>').replace('[[IE]]', '</i>')
         
-        # 6. Fazla boşlukları temizle
         return text.strip()
 
     def process_file_cleaning(self, file_path):
@@ -62,11 +55,15 @@ class ConversionThread(QThread):
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         
         base_path = os.path.splitext(self.input_file)[0]
-        # .fusiontemp paket dosyası gibi görünen gizli temp alanı
+        # Paket/Dosya gibi görünen geçici klasör
         temp_dir_path = base_path + ".fusiontemp"
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
+        # macOS Paket özelliği tetikleme
+        try: subprocess.run(['SetFile', '-a', 'B', temp_dir_path], stderr=subprocess.DEVNULL)
+        except: pass
+
         output_file = base_path + "_Fusion.mkv"
 
         try:
@@ -84,7 +81,6 @@ class ConversionThread(QThread):
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
-            # Dışarı aktarırken metin tabanlı srt'ye zorla
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
@@ -98,7 +94,6 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': f, 'lang': lang})
 
-        # Muxing: Chapters ve Dil korunur, Global Metadata temizlenir
         cmd = [ffmpeg, '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -109,7 +104,6 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
-        # KRİTİK: map_metadata -1 çöpleri temizler, map_chapters 0 bölümleri tutar
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
         
