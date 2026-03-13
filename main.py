@@ -18,51 +18,32 @@ class ConversionThread(QThread):
         self.load_external = load_external
 
     def clean_and_force_srt_italics(self, text):
-        """
-        Metindeki tüm ASS kodlarını temizler ve 
-        çalışan örnekteki gibi tertemiz <i> etiketleri kurar.
-        """
         if not text: return ""
-        # 1. Mevcut tüm italik varyasyonlarını temizle
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
-        # 2. Diğer tüm teknik süslü parantezli ASS kodlarını sil
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # 3. Başa ve sona zorla italik koy (Çalışan örnekteki format)
         return f"<i>{text.strip()}</i>"
 
     def process_ass_to_srt_with_italics(self, ass_path, srt_output_path):
-        """
-        ASS dosyasını manuel tarar, 'Italics' stilindeki satırları 
-        yakalayıp <i> etiketiyle SRT formatına çevirir.
-        """
         try:
             with open(ass_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
-            
-            srt_content = []
-            counter = 1
-            
+            srt_content = []; counter = 1
             for line in lines:
                 if line.startswith("Dialogue:"):
                     parts = line.split(',', 9)
                     if len(parts) >= 10:
-                        # Zaman damgasını SRT formatına (00:00:00,000) çevir
                         start_time = parts[1].replace('.', ',') + "0"
                         end_time = parts[2].replace('.', ',') + "0"
                         style = parts[3]
                         text = parts[9].strip()
-                        
-                        # Stil 'Italics' ise veya metin içinde {\i1} etiketi varsa zorla uygula
                         if "italic" in style.lower() or "{\\i1}" in text:
                             text = self.clean_and_force_srt_italics(text)
                         else:
                             text = re.sub(r'\{[^\}]*\}', '', text).strip()
-                        
                         if text:
                             srt_content.append(f"{counter}\n0{start_time[:-1]} --> 0{end_time[:-1]}\n{text}\n\n")
                             counter += 1
-            
             with open(srt_output_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(srt_content)
         except:
@@ -74,59 +55,41 @@ class ConversionThread(QThread):
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         base_path = os.path.splitext(self.input_file)[0]
         temp_dir_path = base_path + ".fusiontemp"
-        
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
-        
         output_file = base_path + "_Fusion.mkv"
-
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
-        
         internal_subs = []
         for s in info.get('streams', []):
             if s.get('codec_type') == 'subtitle':
                 lang = s.get('tags', {}).get('language', 'und')
                 internal_subs.append({'index': s['index'], 'lang': lang})
-
         cleaned_list = []
-
-        # 1. İÇ ALTYAZILAR
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
-
-        # 2. DIŞ ALTYAZILAR (İncelediğimiz yönteme göre dönüştürülür)
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 ext_check = f.lower()
                 if (ext_check.endswith('.srt') or ext_check.endswith('.ass')) and f != self.input_file:
                     temp_ext_path = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
-                    if ext_check.endswith('.ass'):
-                        self.process_ass_to_srt_with_italics(f, temp_ext_path)
-                    else:
-                        shutil.copy2(f, temp_ext_path)
-                    
+                    if ext_check.endswith('.ass'): self.process_ass_to_srt_with_italics(f, temp_ext_path)
+                    else: shutil.copy2(f, temp_ext_path)
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext_check)
                     cleaned_list.append({'path': temp_ext_path, 'lang': match.group(1) if match else 'und'})
-
-        # 3. MUXING
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
-        
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
             cmd.extend([f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
-
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
@@ -196,9 +159,8 @@ class MainWindow(QMainWindow):
     def setup_menu(self):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
-        # Edit Menüsünü Geri Getirdim
         em = mb.addMenu("Edit")
-        a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence.Delete); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem)
+        a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem)
         a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
     def remove_completed(self):
         to_rem = [i for i in self.container.items if i.status == "done"]
