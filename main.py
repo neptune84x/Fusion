@@ -2,7 +2,7 @@ import sys, os, subprocess, json, glob, re, shutil
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                                  QWidget, QLabel, QProgressBar, QScrollArea, 
-                                 QFrame, QPushButton, QFileDialog, QMenu)
+                                 QFrame, QPushButton, QFileDialog, QMenu, QMessageBox)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint
     from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence
 except ImportError:
@@ -151,17 +151,53 @@ class MainWindow(QMainWindow):
         f_lay.addWidget(self.st_lbl); f_lay.addStretch(); f_lay.addWidget(self.pb); main_v.addWidget(toolbar); main_v.addWidget(self.scroll); main_v.addWidget(footer)
         cw = QWidget(); cw.setLayout(main_v); self.setCentralWidget(cw); self.setup_menu(); self.add_btn.clicked.connect(self.open_files)
         self.start_btn.clicked.connect(self.start_processing); self.settings_btn.clicked.connect(self.show_settings_menu); self.threads = []; self.active_queue = []
+    
     def create_nav_btn(self, icon, text):
         btn = QPushButton(); btn.setFixedSize(60, 65); btn.setStyleSheet("QPushButton{border:none; background:transparent;} QPushButton:hover{background:#f5f5f7; border-radius:10px;}")
         l = QVBoxLayout(btn); l.setContentsMargins(0,0,0,0); l.setSpacing(0); ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 26px; color: #1d1d1f;")
         tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 10px; color: #1d1d1f; font-weight: 500;")
         l.addWidget(ic); l.addWidget(tx); return btn
+
     def setup_menu(self):
-        mb = self.menuBar(); am = mb.addMenu("Fusion"); a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
-        fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
+        mb = self.menuBar()
+        # Fusion Menüsü
+        am = mb.addMenu("Fusion")
+        a_about = QAction("About Fusion", self)
+        a_about.triggered.connect(self.show_about)
+        am.addAction(a_about)
+        am.addSeparator()
+        a_quit = QAction("Quit", self)
+        a_quit.setShortcut(QKeySequence("Ctrl+Q"))
+        a_quit.triggered.connect(self.close)
+        am.addAction(a_quit)
+        
+        # File Menüsü
+        fm = mb.addMenu("File")
+        a_add = QAction("Add Item...", self)
+        a_add.setShortcut(QKeySequence("Ctrl+O"))
+        a_add.triggered.connect(self.open_files)
+        fm.addAction(a_add)
+        
+        # Edit Menüsü
         em = mb.addMenu("Edit")
-        a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem)
-        a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
+        a_rem = QAction("Remove selected", self)
+        a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete))
+        a_rem.triggered.connect(self.remove_selected)
+        em.addAction(a_rem)
+        a_clear = QAction("Clear completed", self)
+        a_clear.triggered.connect(self.remove_completed)
+        em.addAction(a_clear)
+
+    def show_about(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("About Fusion")
+        # Developer kısmına kendi adını veya GitHub kullanıcı adını ekleyebilirsin
+        msg.setText("<b>Fusion</b><br>Version: 0.1.0<br>Developer: Your Name<br><br>"
+                    "High-performance media optimizer for Apple ecosystems.")
+        msg.setInformativeText("Optimized for Infuse, Apple TV, and macOS.")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.exec()
+
     def remove_completed(self):
         to_rem = [i for i in self.container.items if i.status == "done"]
         for i in to_rem: self.container.items.remove(i); i.setParent(None)
