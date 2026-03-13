@@ -17,19 +17,26 @@ class ConversionThread(QThread):
         self.load_external = load_external
 
     def clean_subtitle_text(self, text):
-        """İtalik hariç TÜM bold, color ve stil etiketlerini temizler."""
-        # 1. İtalikleri korumaya al
+        """İtalik hariç TÜM bold, color, font ve ASS/SSA stil kodlarını temizler."""
+        # 1. İtalikleri geçici olarak korumaya al (Büyük-küçük harf duyarlı)
         text = re.sub(r'<(i|I)>', '[[i]]', text)
         text = re.sub(r'</(i|I)>', '[[/i]]', text)
-        # 2. Tüm HTML benzeri etiketleri sil (<b...>, <font...>, <u...>)
+        
+        # 2. Tüm HTML etiketlerini sil (<b>, <u>, <font...>, <br>)
         text = re.sub(r'<[^>]*>', '', text)
+        
         # 3. ASS/SSA süslü parantez stil kodlarını sil ({b1}, {\pos...}, {c&H...})
+        # Bu kısım altyazının içindeki 'bold' kalıntılarını temizleyen en önemli kısımdır.
         text = re.sub(r'\{[^\}]*\}', '', text)
-        # 4. İtalikleri geri yükle
+        
+        # 4. İtalikleri standart formatta geri yükle
         text = text.replace('[[i]]', '<i>').replace('[[/i]]', '</i>')
+        
+        # 5. Gereksiz baş-son boşluklarını al
         return text.strip()
 
     def process_file_cleaning(self, file_path):
+        """Fiziksel SRT/ASS dosyasını temizler ve UTF-8 olarak günceller."""
         try:
             if not os.path.exists(file_path): return
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -40,6 +47,7 @@ class ConversionThread(QThread):
         except: pass
 
     def run(self):
+        # PyInstaller kaynak yönetimi
         ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         
@@ -60,15 +68,18 @@ class ConversionThread(QThread):
                 lang = s.get('tags', {}).get('language', 'und')
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
-        # 2. Altyazıları Çıkart ve TEMİZLE
+        # 2. Dahili Altyazıları Çıkar ve Kesin Temizle
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             temp_sub = os.path.join(temp_dir, "int_" + str(i) + ".srt")
+            # FFmpeg ile sök
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', "0:" + str(sub['index']), temp_sub], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Python ile içindeki Bold/Stil ne varsa temizle
             self.process_file_cleaning(temp_sub)
             cleaned_list.append({'path': temp_sub, 'lang': sub['lang']})
 
+        # 3. Harici Altyazıları Temizle
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
@@ -77,9 +88,9 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': f, 'lang': lang})
 
-        # 3. Muxing & Metadata Temizliği
-        # -map_metadata -1: Global metadatayı siler
-        # -map_chapters 0: Bölümleri korur
+        # 4. Final Muxing & Metadata Temizliği
+        # -map_metadata -1: Tüm global tag'leri siler.
+        # -map_chapters 0: Chapter'ları korur.
         cmd = [ffmpeg, '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         
@@ -91,7 +102,7 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend(["-metadata:s:s:" + str(i), "language=" + l_code])
 
-        # Global metadatayı temizle, Chapterları koru, Altyazıları SRT (Temiz) formatına zorla
+        # Altyazıları standart temiz SRT'ye zorla, global metadatayı sil, bölümleri tut
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
         
@@ -217,12 +228,25 @@ class MainWindow(QMainWindow):
 
     def setup_menu(self):
         mb = self.menuBar()
+        
+        # File Menüsü
         fm = mb.addMenu("File")
-        a1 = QAction("Add Item...", self); a1.setShortcut(QKeySequence("Ctrl+O"))
-        a1.triggered.connect(self.open_files); fm.addAction(a1)
+        a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O"))
+        a_add.triggered.connect(self.open_files); fm.addAction(a_add)
+        
+        # Edit Menüsü
+        em = mb.addMenu("Edit")
+        a_rem = QAction("Remove Selected", self); a_rem.setShortcut(QKeySequence("Backspace"))
+        a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem)
+        a_clear = QAction("Clear Completed", self)
+        a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
+
+        # Fusion (App) Menüsü
         am = mb.addMenu("Fusion")
-        a2 = QAction("Quit", self); a2.setShortcut(QKeySequence("Ctrl+Q"))
-        a2.triggered.connect(self.close); am.addAction(a2)
+        a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about)
+        am.addAction(a_about)
+        a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q"))
+        a_quit.triggered.connect(self.close); am.addAction(a_quit)
 
     def remove_completed(self):
         to_remove = [i for i in self.container.items if i.status == "done"]
@@ -234,7 +258,8 @@ class MainWindow(QMainWindow):
         for i in to_remove: self.container.items.remove(i); i.setParent(None)
         self.st_lbl.setText(str(len(self.container.items)) + " items in queue.")
 
-    def show_about(self): QMessageBox.about(self, "About Fusion", "Fusion v1.0")
+    def show_about(self): QMessageBox.about(self, "About Fusion", "Fusion v1.0\nmacOS Media Optimizer")
+    
     def show_settings_menu(self):
         menu = QMenu(self)
         act = QAction("Load External Subtitles", self); act.setCheckable(True); act.setChecked(self.load_external_subs)
