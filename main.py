@@ -18,30 +18,27 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Garantili İtalik Koruma: 
-        Önce italikleri çok özel bir karakter dizisine çevirir, 
-        temizlikten sonra srt standartı olan <i></i> etiketine döndürür.
+        Garantili İtalik Koruma ve Bold Temizliği.
         """
-        # 1. Her türlü italik kodunu (HTML, ASS, RTF) tek bir maskeye çevir
-        # <i>, [i], {\i1}, \i1 gibi tüm varyasyonlar
-        text = re.sub(r'<(i|I)>|\[i\]|\{\\i1\}|\\i1', '___FUSION_ITA_START___', text)
-        text = re.sub(r'</(i|I)>|\[/i\]|\{\\i0\}|\\i0', '___FUSION_ITA_END___', text)
+        # 1. TÜM İtalik varyasyonlarını maskele (Silinmemesi için)
+        # <i>, {\i1}, {\i}, \i1, \i kodlarının hepsini yakalar
+        text = re.sub(r'<(i|I)>|\\\{\\i[1]?\}|\\i1|\\i(?![a-zA-Z0-9])', '[[F_ITA_S]]', text)
+        text = re.sub(r'</(i|I)>|\\\{\\i0\}|\\i0', '[[F_ITA_E]]', text)
         
-        # 2. Bold (Kalın) kodlarını temizle
-        # <b>, {\b1}, \b1 vb. her şeyi yok et
+        # 2. Bold (Kalın) kodlarını her formatta sil
+        # <b>, {\b1}, \b1 vb.
         text = re.sub(r'<(b|B)>|</(b|B)>|\[b\]|\[/b\]', '', text)
         text = re.sub(r'\{\\b[0-9]\}|\\b[0-9]', '', text)
         
         # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını temizle ({...})
-        # Bu aşamada italikler maskelendiği için silinmez
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. Diğer tüm HTML benzeri etiketleri (font, u, s vb.) temizle
+        # 4. Diğer tüm HTML etiketlerini (font, u, s vb.) temizle
         text = re.sub(r'<[^>]*>', '', text)
         
         # 5. Maskelenmiş italikleri standart SRT italik etiketine çevir
-        text = text.replace('___FUSION_ITA_START___', '<i>')
-        text = text.replace('___FUSION_ITA_END___', '</i>')
+        text = text.replace('[[F_ITA_S]]', '<i>')
+        text = text.replace('[[F_ITA_E]]', '</i>')
         
         # 6. Markdown bold kalıntılarını sil (** veya __)
         text = text.replace('**', '').replace('__', '')
@@ -51,7 +48,6 @@ class ConversionThread(QThread):
     def process_file_cleaning(self, file_path):
         try:
             if not os.path.exists(file_path): return
-            # Altyazıyı oku, temizle ve UTF-8 olarak geri yaz
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             cleaned = self.clean_subtitle_text(content)
@@ -64,18 +60,21 @@ class ConversionThread(QThread):
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
         
         base_path = os.path.splitext(self.input_file)[0]
-        # Paket/Dosya görünümü için .fusiontemp
         temp_dir_path = base_path + ".fusiontemp"
+        
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
-        # macOS Bundle bitini tetikleyerek klasörü dosya gibi göster
-        try: subprocess.run(['SetFile', '-a', 'B', temp_dir_path], stderr=subprocess.DEVNULL)
+        # GÖRSELDEKİ UYARIYI ENGELLEMEK İÇİN: 
+        # SetFile yerine macOS'un yerleşik AppleScript altyapısını kullanarak paket gibi gösteriyoruz.
+        # Bu yöntem Xcode araçları gerektirmez.
+        try:
+            ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
+            subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
         except: pass
 
         output_file = base_path + "_Fusion.mkv"
 
-        # 1. Analiz
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
@@ -87,18 +86,15 @@ class ConversionThread(QThread):
                 lang = s.get('tags', {}).get('language', 'und')
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
-        # 2. Çıkarma ve Temizleme
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
-            # FFmpeg ile söküp temizliyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # 3. Harici Altyazılar
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
@@ -107,7 +103,6 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': f, 'lang': lang})
 
-        # 4. Muxing: Metadata Temizle, Chapters ve Dil Kodlarını Koru
         cmd = [ffmpeg, '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -118,16 +113,14 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
-        # map_metadata -1 çöpleri temizler, map_chapters 0 bölümleri tutar
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        # Temizlik
         shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
+# --- GUI Sınıfları (MainWindow, FileWidget vb.) ---
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
