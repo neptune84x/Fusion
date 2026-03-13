@@ -18,26 +18,27 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Gelişmiş İtalik Koruma: FFmpeg'in sildiği tüm varyasyonları yakalar.
+        Garantili Manuel İtalik Koruma Sistemi:
+        FFmpeg'in silmesine izin vermeden önce manuel olarak SRT formatına dönüştürür.
         """
-        # 1. İtalik işaretlerini zırhlı maskeye al
-        # ASS stili (\i1, {\i1}), SRT stili (<i>) ve FFmpeg kalıntılarını yakalar
-        text = re.sub(r'\{\\i1\}|\\i1|\\i(?![0-9a-zA-Z])|<i\s*>|<I\s*>', '[[F_ITA_S]]', text)
-        text = re.sub(r'\{\\i0\}|\\i0|<\s*/i\s*>|<\s*/I\s*>', '[[F_ITA_E]]', text)
+        # 1. ASS/SSA formatındaki italikleri (\i1 ve {\i1}) SRT <i> etiketine çevir
+        text = re.sub(r'\{\\i1\}|\\i1|\\i(?![0-9a-zA-Z])', '<i>', text)
+        text = re.sub(r'\{\\i0\}|\\i0', '</i>', text)
         
-        # 2. Bold (Kalın) kodlarını temizle
+        # 2. Bold (Kalın) kodlarını SİL
         text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+|<\s*b\s*>|<\s*/b\s*>|\[b\]|\[/b\]', '', text, flags=re.IGNORECASE)
         
-        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını sil ({...})
+        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını temizle ({...})
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. Diğer tüm HTML etiketlerini (font, u vb.) sil
-        text = re.sub(r'<[^>]*>', '', text)
+        # 4. SRT formatında zaten var olabilecek hatalı veya büyük harf etiketleri düzelt
+        text = re.sub(r'<I\s*>', '<i>', text)
+        text = re.sub(r'<\s*/I\s*>', '</i>', text)
         
-        # 5. Maskelenmiş italikleri standart SRT <i> formatına çevir
-        text = text.replace('[[F_ITA_S]]', '<i>').replace('[[F_ITA_E]]', '</i>')
+        # 5. Gereksiz HTML etiketlerini (font, u, s vb.) temizle (sadece <i> kalsın)
+        text = re.sub(r'<(?!/?i>)[^>]*>', '', text)
         
-        # 6. Gereksiz karakter ve çift boşluk temizliği
+        # 6. Temizlik sonrası karakter ve boşluk düzenleme
         text = text.replace('**', '').replace('__', '')
         text = re.sub(r' +', ' ', text)
         
@@ -46,9 +47,12 @@ class ConversionThread(QThread):
     def process_file_cleaning(self, file_path):
         try:
             if not os.path.exists(file_path): return
+            # UTF-8-SIG ile oku (BOM varsa temizler), hataları görmezden gel
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 content = f.read()
+            
             cleaned = self.clean_subtitle_text(content)
+            
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(cleaned)
         except: pass
@@ -85,19 +89,32 @@ class ConversionThread(QThread):
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
-            # Kritik: FFmpeg'in italikleri silmemesi için 'sub_charenc' zorlaması yapıyoruz
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
+            
+            # Kritik Değişiklik: FFmpeg'in etiketleri silmemesi için 'text' (ham metin) formatına yakın bir çıktı alıyoruz
+            # Sonra kendi temizlik fonksiyonumuzla onu standart SRT'ye çekiyoruz.
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "text", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Eğer 'text' formatı başarısız olursa normal SRT dene (Bazı FFmpeg sürümleri için)
+            if not os.path.exists(temp_sub_path) or os.path.getsize(temp_sub_path) == 0:
+                subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
-                    self.process_file_cleaning(f)
+                    # Orijinal dosyaya dokunmamak için geçici bir kopya oluştur
+                    ext = os.path.splitext(f)[1]
+                    temp_ext_sub = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}{ext}")
+                    shutil.copy2(f, temp_ext_sub)
+                    self.process_file_cleaning(temp_ext_sub)
+                    
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
                     lang = match.group(1) if match else 'und'
-                    cleaned_list.append({'path': f, 'lang': lang})
+                    cleaned_list.append({'path': temp_ext_sub, 'lang': lang})
 
         # MUXING: Chapters ve Metadata Koruma
         cmd = [ffmpeg, '-i', self.input_file]
