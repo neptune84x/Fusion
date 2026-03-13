@@ -2,7 +2,7 @@ import sys, os, subprocess, json, glob, re, shutil
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                                  QWidget, QLabel, QProgressBar, QScrollArea, 
-                                 QFrame, QPushButton, QFileDialog, QMenu, QMessageBox)
+                                 QFrame, QPushButton, QFileDialog, QMenu)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint
     from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence
 except ImportError:
@@ -16,33 +16,33 @@ class ConversionThread(QThread):
         self.widget = widget
         self.load_external = load_external
 
-    def convert_to_vtt_format(self, srt_path):
+    def clean_subtitle_text(self, text):
         """
-        SRT dosyasını Infuse/Apple dostu WebVTT formatına dönüştürür.
+        Apple cihazları ve Infuse için italikleri mov_text uyumlu hale getirir.
         """
-        try:
-            with open(srt_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
-                content = f.read()
+        if not text: return ""
+        # 1. Tüm italik varyasyonlarını standart <i> formatına çek
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', text)
+        # 2. ASS ve diğer süslü parantezli kodları tamamen sil
+        text = re.sub(r'\{[^\}]*\}', '', text)
+        # 3. Diğer HTML etiketlerini temizle (sadece <i> kalsın)
+        text = re.sub(r'<(?!/?i)[^>]*>', '', text)
+        return text.strip()
 
-            # 1. Başlığa WebVTT damgasını vur
-            vtt_content = "WEBVTT\n\n"
-            
-            # 2. SRT zaman damgalarını (00:00:00,000) VTT formatına (00:00:00.000) çevir
-            content = content.replace(',', '.')
-            
-            # 3. İtalik varyasyonlarını temizle ve standart <i> yap
-            content = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', content)
-            content = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', content)
-            
-            # 4. Diğer tüm ASS/SSA kodlarını temizle
-            content = re.sub(r'\{[^\}]*\}', '', content)
-            
-            # 5. Sıra numaralarını VTT'de genelde siliyoruz ama Infuse için sorun olmaz
-            # Sadece içeriği ekle
-            vtt_content += content
-            
-            with open(srt_path, 'w', encoding='utf-8') as f:
-                f.write(vtt_content)
+    def process_file_cleaning(self, file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                if "-->" not in line and not line.strip().isdigit():
+                    cleaned = self.clean_subtitle_text(line)
+                    new_lines.append(cleaned + "\n")
+                else:
+                    new_lines.append(line)
+            with open(file_path, 'w', encoding='utf-8-sig') as f:
+                f.writelines(new_lines)
         except: pass
 
     def run(self):
@@ -68,27 +68,26 @@ class ConversionThread(QThread):
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
         cleaned_list = []
-        # İç altyazılar
+        # İç altyazıları mov_text uyumlu SRT olarak hazırla
         for i, sub in enumerate(internal_subs):
-            temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.vtt") # VTT uzantısı
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'webvtt', temp_sub_path], 
+            temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.convert_to_vtt_format(temp_sub_path)
+            self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # Dış altyazılar (External)
+        # Harici (External) altyazıları dahil et
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 ext_check = f.lower()
                 if (ext_check.endswith('.srt') or ext_check.endswith('.ass')) and f != self.input_file:
-                    temp_ext_path = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.vtt")
-                    # FFmpeg ile VTT'ye çevirerek al
-                    subprocess.run([ffmpeg, '-y', '-i', f, temp_ext_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    self.convert_to_vtt_format(temp_ext_path)
+                    temp_ext_path = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
+                    shutil.copy2(f, temp_ext_path)
+                    self.process_file_cleaning(temp_ext_path)
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext_check)
                     cleaned_list.append({'path': temp_ext_path, 'lang': match.group(1) if match else 'und'})
 
-        # MUXING
+        # MUXING (Apple Native mov_text Dönüşümü)
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -96,17 +95,17 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
-            # MKV içinde WebVTT olarak paketle (Infuse'un en sevdiği)
-            cmd.extend([f"-c:s:{i}", "webvtt", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
+            # KRİTİK: Apple ekosistemi için altyazıları 'mov_text' formatına zorluyoruz
+            cmd.extend([f"-c:s:{i}", "mov_text", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
-        # Bölümleri koru, metadatayı sil
+        # Bölümleri (Chapters) Koru, Metadatayı Sil
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI (Sabit ve Hatasız) ---
+# --- GUI BİLEŞENLERİ ---
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
