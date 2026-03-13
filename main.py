@@ -18,34 +18,31 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        İtalikleri en agresif ve silinemez SRT formatında korur.
-        Özellikle 'Fark ettilerse' gibi kelimeleri korumak için.
+        Infuse ve Apple cihazları için italikleri ham SRT formatında korur.
         """
         if not text: return ""
-        # 1. Her türlü italik kodunu (ASS/HTML) standart <i> formatına çek
+        # 1. Tüm italik varyasyonlarını Infuse'un tanıdığı <i> formatına zorla
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', text)
-        
-        # 2. ASS kodlarını ve diğer HTML etiketlerini tamamen süpür (İtalik hariç)
+        # 2. ASS/SSA formatındaki diğer süslü parantezli kodları temizle
         text = re.sub(r'\{[^\}]*\}', '', text)
+        # 3. İtalik dışındaki diğer HTML etiketlerini sil
         text = re.sub(r'<(?!/?i)[^>]*>', '', text)
-        
-        # 3. Boşlukları ve gereksiz satır başlarını temizle
         return text.strip()
 
     def process_file_cleaning(self, file_path):
         try:
-            # UTF-8 with BOM (Apple'ın en sevdiği SRT varyasyonu)
+            # Okuma: UTF-8-sig (BOM) Infuse için en güvenli yoldur
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
             new_lines = []
             for line in lines:
                 if "-->" not in line and not line.strip().isdigit():
                     cleaned = self.clean_subtitle_text(line)
-                    if cleaned:
-                        new_lines.append(cleaned + "\n")
+                    new_lines.append(cleaned + "\n")
                 else:
                     new_lines.append(line)
+            # Yazma: UTF-8-sig ile tekrar kaydet
             with open(file_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(new_lines)
         except: pass
@@ -77,69 +74,64 @@ class ConversionThread(QThread):
                 internal_subs.append({'index': s['index'], 'lang': lang})
 
         cleaned_list = []
+        # --- İÇ ALTYAZILAR ---
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            # FFmpeg ile altyazıyı ham metin olarak dışarı al
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
+        # --- DIŞ (EXTERNAL) ALTYAZILAR ---
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
-                if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
+                ext = f.lower()
+                # Dosyanın kendisi değilse ve srt/ass ise al
+                if (ext.endswith('.srt') or ext.endswith('.ass')) and f != self.input_file:
                     temp_ext_sub = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
                     shutil.copy2(f, temp_ext_sub)
                     self.process_file_cleaning(temp_ext_sub)
-                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
+                    # Dil etiketini dosyadan çekmeye çalış (film.en.srt gibi)
+                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext)
                     cleaned_list.append({'path': temp_ext_sub, 'lang': match.group(1) if match else 'und'})
 
-        # MUXING ADIMI
+        # MUXING (BİRLEŞTİRME)
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
+        
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
         
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
-            # KRİTİK: Altyazı codec'ini 'text' (ham srt) olarak işaretliyoruz
+            # Infuse ve Apple için SRT codec'ini en temiz haliyle (text) kullanıyoruz
             cmd.extend([f"-c:s:{i}", "srt", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
-        # Bölümleri (Chapters) koru, global gereksiz metadatayı sil
+        # KRİTİK: Bölümleri (Chapters) Koru, Metadata Temizle
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI (Sürükle-Bırak Çökme Hatası Giderilmiş Hali) ---
+# --- GUI BİLEŞENLERİ (Sürükle-Bırak Hatası Giderildi) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
-        self.parent_list = parent_list; self.is_selected = False; self.status = "waiting"
-        self.setFixedHeight(30)
-        self.layout = QHBoxLayout(self); self.layout.setContentsMargins(15, 0, 15, 0)
-        self.status_icon = QLabel("○"); self.status_icon.setFixedWidth(20)
-        self.name_label = QLabel(filename)
-        self.layout.addWidget(self.status_icon); self.layout.addWidget(self.name_label); self.layout.addStretch()
-        self.update_style()
+        self.parent_list = parent_list; self.is_selected = False; self.status = "waiting"; self.setFixedHeight(30)
+        self.layout = QHBoxLayout(self); self.layout.setContentsMargins(15, 0, 15, 0); self.status_icon = QLabel("○"); self.status_icon.setFixedWidth(20)
+        self.name_label = QLabel(filename); self.layout.addWidget(self.status_icon); self.layout.addWidget(self.name_label); self.layout.addStretch(); self.update_style()
     def set_status(self, mode):
-        self.status = mode
-        icons = {"working": "●", "done": "✓", "waiting": "○"}
-        colors = {"working": "#ff9500", "done": "#34c759", "waiting": "#8e8e93"}
-        self.status_icon.setText(icons.get(mode, "○"))
-        self.status_icon.setStyleSheet(f"color: {colors.get(mode, '#8e8e93')}; font-size: 14px;")
+        self.status = mode; icons = {"working": "●", "done": "✓", "waiting": "○"}; colors = {"working": "#ff9500", "done": "#34c759", "waiting": "#8e8e93"}
+        self.status_icon.setText(icons.get(mode, "○")); self.status_icon.setStyleSheet(f"color: {colors.get(mode, '#8e8e93')}; font-size: 14px;")
     def update_style(self):
-        bg = "#007aff" if self.is_selected else "transparent"
-        txt = "white" if self.is_selected else "#111"
-        self.setStyleSheet(f"background-color: {bg}; border-radius: 4px;")
-        self.name_label.setStyleSheet(f"color: {txt}; font-size: 13px;")
+        bg = "#007aff" if self.is_selected else "transparent"; txt = "white" if self.is_selected else "#111"
+        self.setStyleSheet(f"background-color: {bg}; border-radius: 4px;"); self.name_label.setStyleSheet(f"color: {txt}; font-size: 13px;")
 
 class SublerListWidget(QWidget):
     def __init__(self, main_window):
-        super().__init__()
-        self.main_window = main_window; self.items = []; self.selection_start = None; self.selection_rect = QRect()
+        super().__init__(); self.main_window = main_window; self.items = []; self.selection_start = None; self.selection_rect = QRect()
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); self.customContextMenuRequested.connect(self.show_context_menu)
         self.layout = QVBoxLayout(self); self.layout.setContentsMargins(5, 5, 5, 5); self.layout.setSpacing(2); self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
     def paintEvent(self, event):
