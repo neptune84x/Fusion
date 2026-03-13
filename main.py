@@ -2,11 +2,10 @@ import sys, os, subprocess, json, glob, re, shutil
 try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                                  QWidget, QLabel, QProgressBar, QScrollArea, 
-                                 QFrame, QPushButton, QFileDialog, QMenu, QMessageBox)
+                                 QFrame, QPushButton, QFileDialog, QMenu)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint
     from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence
 except ImportError:
-    # Uygulama açılmıyorsa muhtemelen PyQt6 eksiktir
     sys.exit(1)
 
 class ConversionThread(QThread):
@@ -18,62 +17,63 @@ class ConversionThread(QThread):
         self.widget = widget
         self.load_external = load_external
 
-    def force_italics_on_text(self, text):
+    def clean_and_force_srt_italics(self, text):
         """
-        Metni temizler ve eğer ASS stilinden gelen bir italik durumu varsa 
-        Infuse'un göreceği şekilde <i> etiketlerini garantiye alır.
+        Metindeki tüm ASS kodlarını temizler ve 
+        çalışan örnekteki gibi tertemiz <i>etiketleri kurar.
         """
         if not text: return ""
-        # 1. ASS/SSA kodlarını ve halihazırdaki italik etiketlerini normalize et
-        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '<i>', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '</i>', text)
-        
-        # 2. Diğer tüm teknik süslü parantez kodlarını ({...}) temizle
+        # 1. Mevcut tüm italik varyasyonlarını temizle (iç içe geçmeyi önlemek için)
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
+        # 2. Diğer tüm teknik süslü parantezli ASS kodlarını sil
         text = re.sub(r'\{[^\}]*\}', '', text)
-        
-        # 3. İtalik dışındaki diğer HTML benzeri etiketleri sil
-        text = re.sub(r'<(?!/?i)[^>]*>', '', text)
-        
-        return text.strip()
+        # 3. Başa ve sona zorla italik koy
+        return f"<i>{text.strip()}</i>"
 
-    def process_file_cleaning(self, file_path, is_ass_source=False):
+    def process_ass_to_srt_with_italics(self, ass_path, srt_output_path):
         """
-        SRT dosyasını satır satır tarar, "Italics" stili içerenleri bulur 
-        ve Infuse için <i> formatına zorlar.
+        ASS dosyasını manuel tarar, 'Italics' stilindeki satırları 
+        bulup <i> etiketiyle SRT formatına çevirir.
         """
         try:
-            with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+            with open(ass_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
             
-            new_lines = []
-            for line in lines:
-                # Zaman damgası veya sıra numarası satırı değilse içeriğe müdahale et
-                if "-->" not in line and not line.strip().isdigit():
-                    # ASS kaynaklı dosyalarda Stil ismini kontrol et (Sizin yolladığınız dosyaya özel)
-                    if is_ass_source and (",Italics," in line or ",Italic," in line):
-                        # "Dialogue: ..." yapısından metin kısmını ayır (genelde son ,, den sonra gelir)
-                        parts = line.split(",,", 1)
-                        content = parts[1] if len(parts) > 1 else line
-                        cleaned = self.force_italics_on_text(content)
-                        # Eğer zaten <i> ile başlamıyorsa ekle
-                        if cleaned and not cleaned.startswith("<i>"):
-                            cleaned = f"<i>{cleaned}</i>"
-                        new_lines.append(cleaned + "\n")
-                    else:
-                        new_lines.append(self.force_italics_on_text(line) + "\n")
-                else:
-                    new_lines.append(line)
+            srt_content = []
+            counter = 1
             
-            with open(file_path, 'w', encoding='utf-8-sig') as f:
-                f.writelines(new_lines)
-        except Exception as e:
-            print(f"Temizlik hatası: {e}")
+            for line in lines:
+                if line.startswith("Dialogue:"):
+                    # ASS satır yapısı: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+                    parts = line.split(',', 9)
+                    if len(parts) >= 10:
+                        start_time = parts[1].replace('.', ',') + "0" # SRT milisaniye uyumu
+                        end_time = parts[2].replace('.', ',') + "0"
+                        style = parts[3]
+                        text = parts[9].strip()
+                        
+                        # Eğer stil 'Italics' ise veya metin içinde {\i1} varsa
+                        if "italic" in style.lower() or "{\\i1}" in text:
+                            text = self.clean_and_force_srt_italics(text)
+                        else:
+                            # Normal satır temizliği (etiketleri siler)
+                            text = re.sub(r'\{[^\}]*\}', '', text).strip()
+                        
+                        if text:
+                            srt_content.append(f"{counter}\n0{start_time[:-1]} --> 0{end_time[:-1]}\n{text}\n\n")
+                            counter += 1
+            
+            with open(srt_output_path, 'w', encoding='utf-8-sig') as f:
+                f.writelines(srt_content)
+        except:
+            # Hata durumunda FFmpeg fallback
+            ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
+            subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def run(self):
-        # macOS App Bundle içindeki FFmpeg yollarını kontrol et
         ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
         ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
-        
         base_path = os.path.splitext(self.input_file)[0]
         temp_dir_path = base_path + ".fusiontemp"
         
@@ -100,10 +100,9 @@ class ConversionThread(QThread):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.process_file_cleaning(temp_sub_path, is_ass_source=False)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
-        # 2. DIŞ ALTYAZILAR (Önce temiz ASS'ye, sonra SRT'ye)
+        # 2. DIŞ ALTYAZILAR (Özel İtalik Korumalı Dönüşüm)
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 ext_check = f.lower()
@@ -111,19 +110,15 @@ class ConversionThread(QThread):
                     temp_ext_path = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
                     
                     if ext_check.endswith('.ass'):
-                        # Öneri: ASS -> Temiz ASS -> SRT
-                        clean_ass = os.path.join(temp_dir_path, "temp_clean.ass")
-                        subprocess.run([ffmpeg, '-y', '-i', f, '-f', 'ass', clean_ass], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        subprocess.run([ffmpeg, '-y', '-i', clean_ass, '-f', 'srt', temp_ext_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        self.process_file_cleaning(temp_ext_path, is_ass_source=True)
+                        # Manuel italik enjeksiyonu ve SRT dönüşümü
+                        self.process_ass_to_srt_with_italics(f, temp_ext_path)
                     else:
                         shutil.copy2(f, temp_ext_path)
-                        self.process_file_cleaning(temp_ext_path, is_ass_source=False)
                     
                     match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext_check)
                     cleaned_list.append({'path': temp_ext_path, 'lang': match.group(1) if match else 'und'})
 
-        # 3. MUXING (Chapters ve Metadata Korumalı)
+        # 3. MUXING
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -134,12 +129,12 @@ class ConversionThread(QThread):
             cmd.extend([f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
 
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
-        
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI BİLEŞENLERİ (Stabilite Odaklı) ---
+# (GUI Sınıfları FileWidget, SublerListWidget, MainWindow tamamen aynı kalarak ilerleme korunur)
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
