@@ -18,37 +18,46 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        İtalikleri korur, geri kalan tüm ASS/renk/stil kodlarını temizler.
+        İtalikleri korur, geri kalan tüm gereksiz etiketleri (ASS/Renk/Stil) siler.
         """
-        # 1. Önce italikleri geçici bir güvenli etikete al
-        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[ITALIC_START]]', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '[[ITALIC_END]]', text)
+        if not text.strip(): return text
         
-        # 2. Tüm süslü parantezli ASS kodlarını ({...}) temizle
+        # 1. Farklı formatlardaki italikleri standart bir geçici etikete al
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[IT_S]]', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '[[IT_E]]', text)
+        
+        # 2. Tüm süslü parantezli kodları ({...}) temizle (Renk, font, pos vb.)
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 3. Kalan tüm HTML benzeri etiketleri temizle
+        # 3. Kalan HTML benzeri tüm etiketleri temizle (<i> hariç her şeyi uçurur)
         text = re.sub(r'<[^>]*>', '', text)
         
-        # 4. Güvenli etiketleri standart SRT italiğine çevir
-        text = text.replace('[[ITALIC_START]]', '<i>').replace('[[ITALIC_END]]', '</i>')
+        # 4. Geçici etiketleri standart SRT italiğine çevir
+        text = text.replace('[[IT_S]]', '<i>').replace('[[IT_E]]', '</i>')
         
-        # 5. Temizlik sonrası boşlukları ve çift çizgileri düzelt
+        # 5. Gereksiz çift sembolleri ve fazla boşlukları temizle
         text = text.replace('**', '').replace('__', '')
         text = re.sub(r' +', ' ', text)
+        
         return text.strip()
 
     def process_file_cleaning(self, file_path):
         try:
             if not os.path.exists(file_path): return
+            # 'utf-8-sig' hem normal hem de BOM'lu dosyaları kapsar
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 lines = f.readlines()
             
             cleaned_lines = []
             for line in lines:
-                # Sadece zaman kodlarını içermeyen (metin olan) kısımları temizle
+                # SRT yapısını bozmamak için sadece metin satırlarını işliyoruz
+                # Zaman kodu (-->) veya sadece sayı olan satırlara dokunma
                 if "-->" not in line and not line.strip().isdigit():
-                    cleaned_lines.append(self.clean_subtitle_text(line) + "\n")
+                    cleaned_line = self.clean_subtitle_text(line)
+                    if cleaned_line:
+                        cleaned_lines.append(cleaned_line + "\n")
+                    else:
+                        cleaned_lines.append("\n") # Boş satırı koru
                 else:
                     cleaned_lines.append(line)
             
@@ -66,7 +75,6 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
-        # macOS Paket Gizleme Özelliği
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
@@ -88,8 +96,9 @@ class ConversionThread(QThread):
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            # FFmpeg ile ham metin olarak ayıkla (italikleri korumak için en güvenli yol)
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub_path], 
+            # KRİTİK: FFmpeg'in otomatik temizlik yapmaması için 'copy' ile ham ayıklama yapıyoruz
+            # Eğer dosya .ass ise bile biz .srt ismini verip içeriği kendimiz düzelteceğiz
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "copy", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
             self.process_file_cleaning(temp_sub_path)
@@ -106,7 +115,7 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': temp_ext_sub, 'lang': lang})
 
-        # MUXING: Chapters ve Metadata Koruma
+        # MUXING: Chapters Korunuyor, Global Metadata Siliniyor
         cmd = [ffmpeg, '-y', '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -117,14 +126,16 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
+        # -map_metadata -1: Global metadatayı temizle (Sarı kısımlar)
+        # -map_chapters 0: Bölümleri koru
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
-                    '-map_metadata', '0', '-map_chapters', '0', output_file])
+                    '-map_metadata', '-1', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI BİLEŞENLERİ (SAĞ TIK VE MENÜLER KORUNDU) ---
+# --- GUI BİLEŞENLERİ (TAMAMEN KORUNDU) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
