@@ -18,28 +18,32 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        ASS ve SRT formatlarındaki italikleri (i1, i) korur, boldları (b1, b) siler.
+        Garantili İtalik Koruma Sistemi.
         """
-        # 1. İTALİK KORUMA: {\i1}, \i1, <i>, [i] varyasyonlarını yakala
-        # Regex: Süslü parantez içindeki veya çıplak \i1 ve \i0 yapılarını maskeler
-        text = re.sub(r'\{\\i1\}|\\i1|<\s*i\s*>|\[i\]', '[[F_ITA_S]]', text)
-        text = re.sub(r'\{\\i0\}|\\i0|<\s*/i\s*>|\[/i\]', '[[F_ITA_E]]', text)
+        # 1. ÖNCE TÜM İTALİK VARYASYONLARINI STANDARTLAŞTIR (Büyük/Küçük harf ve ASS/SRT karışık)
+        # <i>, <I>, {\i1}, \i1, {\i}, \i etiketlerini yakalar
+        text = re.sub(r'<i\s*>|<I\s*>|\\\{\\i[1]?\}|\\i1|\\i(?![a-zA-Z0-9])', '<i>', text, flags=re.IGNORECASE)
+        text = re.sub(r'<\/i\s*>|<\/I\s*>|\\\{\\i0\}|\\i0', '</i>', text, flags=re.IGNORECASE)
         
-        # 2. BOLD SİLME: {\b1}, \b1, <b>, [b] varyasyonlarını temizle
-        text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+|<\s*b\s*>|<\s*/b\s*>|\[b\]|\[/b\]', '', text)
+        # 2. BOLDLARI TAMAMEN SİL
+        # <b>, {\b1}, \b1, [b] vb.
+        text = re.sub(r'<b\s*>|<\/b\s*>|<B\s*>|<\/B\s*>|\[b\]|\[\/b\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+', '', text)
         
-        # 3. DİĞER STİLLERİ SİL: Geri kalan tüm {...} yapılarını (renk, font vb.) temizle
-        # İtalikler maskelendiği için bu aşamada silinmezler
+        # 3. ŞİMDİ İTALİKLERİ KORUYARAK DİĞER TÜM SÜSLÜ PARANTEZLERİ SİL ({...})
+        # İtalik etiketlerini (<i>) geçici olarak güvenli bir bölgeye alalım
+        text = text.replace('<i>', '[[PROTECT_S]]').replace('</i>', '[[PROTECT_E]]')
+        
+        # Kalan tüm {...} yapılarını temizle
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. GENEL TEMİZLİK: Diğer HTML benzeri etiketleri sil
+        # Kalan tüm HTML benzeri etiketleri (font, u, s vb.) temizle
         text = re.sub(r'<[^>]*>', '', text)
         
-        # 5. İTALİKLERİ GERİ YÜKLE: Standart SRT formatına dönüştür
-        text = text.replace('[[F_ITA_S]]', '<i>')
-        text = text.replace('[[F_ITA_E]]', '</i>')
+        # 4. İTALİKLERİ GERİ GETİR
+        text = text.replace('[[PROTECT_S]]', '<i>').replace('[[PROTECT_E]]', '</i>')
         
-        # 6. Markdown kalıntılarını temizle
+        # 5. Markdown temizliği
         text = text.replace('**', '').replace('__', '')
         
         return text.strip()
@@ -47,7 +51,8 @@ class ConversionThread(QThread):
     def process_file_cleaning(self, file_path):
         try:
             if not os.path.exists(file_path): return
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            # Encoding hatalarını önlemek için utf-8-sig (BOM) desteği ekledim
+            with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
                 content = f.read()
             cleaned = self.clean_subtitle_text(content)
             with open(file_path, 'w', encoding='utf-8') as f:
@@ -64,7 +69,7 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
-        # Paket görünümü (osascript ile Xcode uyarısı vermeden)
+        # macOS Xcode uyarısı vermeyen gizleme yöntemi
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
@@ -87,7 +92,7 @@ class ConversionThread(QThread):
         for i, sub in enumerate(internal_subs):
             sub_file = f"int_{i}.srt"
             temp_sub_path = os.path.join(temp_dir_path, sub_file)
-            # Sökerken srt'ye zorlayarak format karmaşasını azaltıyoruz
+            # FFmpeg ile SRT'ye çevirirken etiketleri olabildiğince korumaya çalışıyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.process_file_cleaning(temp_sub_path)
@@ -101,6 +106,7 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': f, 'lang': lang})
 
+        # MUXING: Chapters ve Metadata Koruma
         cmd = [ffmpeg, '-i', self.input_file]
         for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
@@ -111,6 +117,7 @@ class ConversionThread(QThread):
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
+        # map_metadata -1 çöpleri siler, map_chapters 0 bölümleri tutar
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '-1', '-map_chapters', '0', '-y', output_file])
         
@@ -118,6 +125,7 @@ class ConversionThread(QThread):
         shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
+# --- GUI KISMI (MainWindow, FileWidget vb.) AYNI KALDI ---
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
