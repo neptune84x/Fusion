@@ -18,39 +18,42 @@ class ConversionThread(QThread):
 
     def clean_subtitle_text(self, text):
         """
-        Manuel İtalik Koruma: FFmpeg müdahale etmeden önce etiketleri standartlaştırır.
+        İtalikleri korur, geri kalan tüm ASS/renk/stil kodlarını temizler.
         """
-        # 1. ASS ve SSA italiklerini SRT formatına çevir
-        text = re.sub(r'\{\\i1\}|\\i1|\\i(?![0-9a-zA-Z])', '<i>', text)
-        text = re.sub(r'\{\\i0\}|\\i0', '</i>', text)
+        # 1. Önce italikleri geçici bir güvenli etikete al
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '[[ITALIC_START]]', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '[[ITALIC_END]]', text)
         
-        # 2. Bold (Kalın) kodlarını temizle
-        text = re.sub(r'\{\\b[0-9]+\}|\\b[0-9]+|<\s*b\s*>|<\s*/b\s*>|\[b\]|\[/b\]', '', text, flags=re.IGNORECASE)
-        
-        # 3. Kalan TÜM süslü parantezli stil ve renk kodlarını sil ({...})
+        # 2. Tüm süslü parantezli ASS kodlarını ({...}) temizle
         text = re.sub(r'\{[^\}]*\}', '', text)
         
-        # 4. SRT içindeki hatalı italik etiketlerini (büyük harf vb.) düzelt
-        text = re.sub(r'<I\s*>', '<i>', text)
-        text = re.sub(r'<\s*/I\s*>', '</i>', text)
+        # 3. Kalan tüm HTML benzeri etiketleri temizle
+        text = re.sub(r'<[^>]*>', '', text)
         
-        # 5. Gereksiz HTML etiketlerini sil (Sadece <i> kalsın)
-        text = re.sub(r'<(?!/?i>)[^>]*>', '', text)
+        # 4. Güvenli etiketleri standart SRT italiğine çevir
+        text = text.replace('[[ITALIC_START]]', '<i>').replace('[[ITALIC_END]]', '</i>')
         
-        # 6. Temizlik sonrası karakter ve boşluk düzenleme
+        # 5. Temizlik sonrası boşlukları ve çift çizgileri düzelt
         text = text.replace('**', '').replace('__', '')
         text = re.sub(r' +', ' ', text)
-        
         return text.strip()
 
     def process_file_cleaning(self, file_path):
         try:
             if not os.path.exists(file_path): return
             with open(file_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
-                content = f.read()
-            cleaned = self.clean_subtitle_text(content)
+                lines = f.readlines()
+            
+            cleaned_lines = []
+            for line in lines:
+                # Sadece zaman kodlarını içermeyen (metin olan) kısımları temizle
+                if "-->" not in line and not line.strip().isdigit():
+                    cleaned_lines.append(self.clean_subtitle_text(line) + "\n")
+                else:
+                    cleaned_lines.append(line)
+            
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(cleaned)
+                f.writelines(cleaned_lines)
         except: pass
 
     def run(self):
@@ -63,6 +66,7 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
         os.makedirs(temp_dir_path, exist_ok=True)
         
+        # macOS Paket Gizleme Özelliği
         try:
             ascript = f'tell application "Finder" to set extension hidden of POSIX file "{temp_dir_path}" to true'
             subprocess.run(['osascript', '-e', ascript], stderr=subprocess.DEVNULL)
@@ -83,18 +87,11 @@ class ConversionThread(QThread):
 
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
-            # Dahili altyazıları ayıklarken 'srt' formatına zorlamak yerine ham metin olarak çekiyoruz
             temp_sub_path = os.path.join(temp_dir_path, f"int_{i}.srt")
-            
-            # Ayıklama (Extraction): İtalikleri korumak için ham metin modunda çıkarıyoruz
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "text", temp_sub_path], 
+            # FFmpeg ile ham metin olarak ayıkla (italikleri korumak için en güvenli yol)
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", temp_sub_path], 
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
-            # Eğer text modu başarısız olursa srt olarak tekrar dene
-            if not os.path.exists(temp_sub_path) or os.path.getsize(temp_sub_path) == 0:
-                subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", "-c:s", "srt", temp_sub_path], 
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
             self.process_file_cleaning(temp_sub_path)
             cleaned_list.append({'path': temp_sub_path, 'lang': sub['lang']})
 
@@ -109,35 +106,25 @@ class ConversionThread(QThread):
                     lang = match.group(1) if match else 'und'
                     cleaned_list.append({'path': temp_ext_sub, 'lang': lang})
 
-        # MUXING AŞAMASI (Çıktı Dosyasının Garantilenmesi)
-        # Giriş dosyalarını ekle
+        # MUXING: Chapters ve Metadata Koruma
         cmd = [ffmpeg, '-y', '-i', self.input_file]
-        for c in cleaned_list: 
-            cmd.extend(['-i', c['path']])
-        
-        # Video ve Ses akışlarını eşle
+        for c in cleaned_list: cmd.extend(['-i', c['path']])
         cmd.extend(['-map', '0:v', '-map', '0:a?'])
         
-        # Altyazı akışlarını eşle ve metadata ata
         lang_map = {"tr": "tur", "en": "eng", "ru": "rus", "jp": "jpn", "de": "ger", "fr": "fra", "es": "spa", "it": "ita"}
         for i, c in enumerate(cleaned_list):
             cmd.extend(['-map', str(i + 1)])
             l_code = lang_map.get(c['lang'], c['lang'])
             cmd.extend([f"-metadata:s:s:{i}", f"language={l_code}", f"-metadata:s:s:{i}", "title="])
 
-        # Video/Ses kopyala, Altyazı SRT olsun, Chapters'ı koru
         cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-c:s', 'srt', 
                     '-map_metadata', '0', '-map_chapters', '0', output_file])
         
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        # Geçici dosyaları temizle
-        if os.path.exists(temp_dir_path):
-            shutil.rmtree(temp_dir_path, ignore_errors=True)
-            
+        shutil.rmtree(temp_dir_path, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI BİLEŞENLERİ (TAMAMEN KORUNDU) ---
+# --- GUI BİLEŞENLERİ (SAĞ TIK VE MENÜLER KORUNDU) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
