@@ -15,31 +15,38 @@ jobs:
       - name: Install dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Download FFmpeg and FFprobe
+      - name: Download Multimedia Tools (FFmpeg, FFprobe, MP4Box)
         run: |
+          # FFmpeg & FFprobe
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
-          chmod +x ffmpeg ffprobe
+          
+          # MP4Box (GPAC static binary for macOS)
+          # Not: Homebrew üzerinden çekip binary'i yerel klasöre alıyoruz
+          brew install gpac
+          cp $(which mp4box) .
+          
+          chmod +x ffmpeg ffprobe mp4box
 
       - name: Create ICNS from PNG
         run: |
-          # PNG dosyasını Apple ICNS formatına çeviriyoruz
           mkdir Fusion.iconset
           sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
           sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
           sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
           iconutil -c icns Fusion.iconset
-          # Fusion.icns dosyası artık hazır
 
       - name: Build with PyInstaller
         run: |
           rm -rf build dist
+          # Binary'leri 'internal' klasörüne koyuyoruz (kodda get_bin buna göre güncellendi)
           python -m PyInstaller --noconfirm --onedir --windowed \
             --contents-directory "internal" \
-            --add-binary "ffmpeg:." \
-            --add-binary "ffprobe:." \
+            --add-binary "ffmpeg:internal" \
+            --add-binary "ffprobe:internal" \
+            --add-binary "mp4box:internal" \
             --icon "Fusion.icns" \
             --name "Fusion" \
             main.py
