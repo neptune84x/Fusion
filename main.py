@@ -11,7 +11,6 @@ except ImportError:
 class ConversionThread(QThread):
     finished_signal = pyqtSignal(object)
     
-    # Parametreleri hem varsayılan değerli hem de GUI ile tam uyumlu yaptık
     def __init__(self, input_file, widget, load_external=True, output_format="mkv"):
         super().__init__()
         self.input_file = input_file
@@ -86,7 +85,7 @@ class ConversionThread(QThread):
         except: info = {}
         
         internal_subs = [s for s in info.get('streams', []) if s.get('codec_type') == 'subtitle']
-        l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
+        l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
         
         cleaned_list = []
         for i, sub in enumerate(internal_subs):
@@ -119,18 +118,21 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video.mp4")
-            # KRİTİK: hvc1 tagi, metadata temizleme, chapter koruma
+            # Adım 1: Metadata temizle, hvc1 tag'le, eski altyazıları sil (-sn)
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
-                           '-c', 'copy', '-tag:v', 'hvc1', '-map_metadata', '-1', '-map_chapters', '0', temp_mp4], capture_output=True)
+                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', temp_mp4], capture_output=True)
             
-            # -brand mp42:isom ve -ipod beraber kullanıldı (-12718 hatası için en güçlü kombinasyon)
-            box_cmd = [mp4box, "-ipod", "-brand", "mp42:isom", "-add", temp_mp4]
-            for c in cleaned_list:
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:fmt=wvtt"])
-            box_cmd.extend(["-new", output_file])
+            # Adım 2: MP4Box ile paketleme (GPAC Title kalıntılarını temizle)
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-add", temp_mp4]
+            for i, c in enumerate(cleaned_list):
+                # Sadece ilk altyazıyı aktif bırak, diğerlerini disable et (Çakışma önleyici)
+                # :name= parametresi GPAC'ın çirkin otomatik başlıklarını siler
+                is_disabled = ":disable" if i > 0 else ""
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:fmt=wvtt:group=2:name={is_disabled}"])
+            
+            box_cmd.extend(["-ipod", "-new", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV: Metadata sil, Chapter koru
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -142,7 +144,6 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI --- (Açılma sorunu burada giderildi)
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
@@ -215,7 +216,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.1.5\nApple Optimization Update.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.1.6\nApple Metadata Fix.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
@@ -251,7 +252,6 @@ class MainWindow(QMainWindow):
     def process_next(self):
         if not self.active_queue: self.st_lbl.setText("Completed."); return
         item = self.active_queue.pop(0); item.set_status("working")
-        # Düzeltme: 4 parametreyi de gönderiyoruz (path, widget, load_subs, format)
         t = ConversionThread(item.full_path, item, self.load_external_subs, self.output_format)
         t.finished_signal.connect(self.on_done); self.threads.append(t); t.start()
     def on_done(self, t):
