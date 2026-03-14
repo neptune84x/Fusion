@@ -26,7 +26,7 @@ class ConversionThread(QThread):
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>| </I>', '', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         text = re.sub(r'\{[^\}]*\}', '', text)
         return f"<i>{text.strip()}</i>"
 
@@ -118,23 +118,18 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video.mp4")
-            # Adım 1: Metadata temizle, hvc1 tag'le, eski altyazıları sil (-sn)
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', temp_mp4], capture_output=True)
             
-            # Adım 2: MP4Box ile paketleme (Subler'ın mp42/isom brandini taklit ediyoruz)
-            # :name= boş bırakılarak GPAC'ın 'sbtl' modunu tetikleyen otomatik başlıklar siliniyor
-            box_cmd = [mp4box, "-brand", "mp42:isom", "-add", temp_mp4]
+            # MP4Box kısmına -tight eklendi
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-tight", "-add", temp_mp4]
             for i, c in enumerate(cleaned_list):
-                # Sadece ilk altyazıyı aktif bırakıyoruz, diğerleri disable (Çakışma önleyici)
                 is_disabled = ":disable" if i > 0 else ""
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
             
-            # Apple cihazlar için global optimizasyon
             box_cmd.extend(["-ipod", "-new", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu (Yalın FFmpeg)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -218,7 +213,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.1.7\nSubler Compatibility Fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.1.8\nAdded -tight flag.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
