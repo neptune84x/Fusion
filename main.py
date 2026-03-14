@@ -27,7 +27,7 @@ class ConversionThread(QThread):
         if not text: return ""
         text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>| </I>', '', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         text = re.sub(r'\{[^\}]*\}', '', text)
         return f"<i>{text.strip()}</i>"
 
@@ -120,28 +120,30 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # -map_chapters 0 ile bölümleri koruyoruz, -map_metadata -1 ile eski gereksiz verileri siliyoruz
+            # -map_chapters 0 ile CHAPTERS korunuyor. -sn ile altyazı kalıntıları temizleniyor.
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box: -brand ve -ab en başta. -inter 100 ve -tight sarma akıcılığını sağlar.
-            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-tight", "-inter", "100"]
+            # MP4Box v26.02 için optimize edilmiş komut dizisi:
+            # -inter 500: Apple için ideal atom aralığı.
+            # -flat: Parçalanmamış, düz yapı zorlaması.
+            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-flat", "-inter", "500"]
             
-            # Önce Video ve Sesi (Track 1-2) ekle
-            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
+            # Video ve ses eklenirken her birine :tight ekleyerek zamanlamayı sıkılaştırıyoruz
+            box_cmd.extend(["-add", f"{temp_mp4}#video:tight", "-add", f"{temp_mp4}#audio:tight"])
             
-            # Altyazıları ekle (Sıralama korundu)
+            # Altyazıları ekle (Sıralama ve Turkish'in sonda olması garanti)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # :group=2 (subtitle) ve :tight parametresi Apple ekosistemi için kritik
+                # Altyazı tracklerine de :tight ekleyerek donmayı engelliyoruz
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
             
-            # -ipod bayrağı sbtl modunu ve atom dizilimini tetikler
+            # -ipod bayrağı Apple "sbtl" muxing modunu tetikler.
             box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu (Sarsılmaz yapı)
+            # MKV Modu (Her zaman stabil)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -225,7 +227,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.8\n- Butter-Smooth Seek (Inter 100ms)\n- Chapters Restoration\n- Subtitle Order & Visibility Fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.2.9\n- Seek Stability (v26.02 Optimized)\n- Track-based Tight Muxing\n- Chapters Preservation.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
