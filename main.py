@@ -11,6 +11,7 @@ except ImportError:
 class ConversionThread(QThread):
     finished_signal = pyqtSignal(object)
     
+    # Init kısmını GUI ile %100 uyumlu hale getirdik (Açılmama hatasını çözer)
     def __init__(self, input_file, widget, load_external=True, output_format="mkv"):
         super().__init__()
         self.input_file = input_file
@@ -25,7 +26,6 @@ class ConversionThread(QThread):
 
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
-        # Tüm etiketleri sil, sadece italik kalsın
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         text = re.sub(r'\{[^\}]*\}', '', text)
@@ -53,9 +53,8 @@ class ConversionThread(QThread):
                     if len(parts) >= 10:
                         start_time = parts[1].replace('.', ',') + "0"
                         end_time = parts[2].replace('.', ',') + "0"
-                        style = parts[3]
                         text = parts[9].strip()
-                        if "italic" in style.lower() or "{\\i1}" in text:
+                        if "italic" in parts[3].lower() or "{\\i1}" in text:
                             text = self.clean_and_force_srt_italics(text)
                         else:
                             text = re.sub(r'\{[^\}]*\}', '', text).strip()
@@ -123,12 +122,14 @@ class ConversionThread(QThread):
 
         # MUXING
         if self.output_format == "mp4_vtt":
-            temp_mp4 = os.path.join(temp_dir, "temp.mp4")
-            # hvc1 tagi ekleniyor, metadata temizleniyor, chapter korunuyor
+            temp_mp4 = os.path.join(temp_dir, "clean_video.mp4")
+            # 1. FFmpeg ile hvc1 tagi, Metadata temizleme ve Chapter koruma
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-map_metadata', '-1', '-map_chapters', '0', temp_mp4], capture_output=True)
             
-            box_cmd = [mp4box, "-brand", "mp42", "-add", temp_mp4]
+            # 2. MP4Box ile Apple Uyumluluğu (iPod tagi + Modern Brandlar)
+            # -brand mp42:isom ve -ipod birlikte en yüksek uyumluluğu sağlar (-12718 hatasını çözer)
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-ipod", "-add", temp_mp4]
             for c in cleaned_list:
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:fmt=wvtt"])
             box_cmd.extend(["-new", output_file])
@@ -146,7 +147,7 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI Bileşenleri ---
+# --- GUI Bileşenleri --- (Senin main.py yapına tam sadık kalınmıştır)
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
@@ -220,7 +221,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.1.2\nApple Compatibility Update.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.1.3\nApple Optimization Update.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
@@ -256,7 +257,6 @@ class MainWindow(QMainWindow):
     def process_next(self):
         if not self.active_queue: self.st_lbl.setText("Completed."); return
         item = self.active_queue.pop(0); item.set_status("working")
-        # BURASI KRİTİK: Parametreleri Thread init'i ile eşitledik
         t = ConversionThread(item.full_path, item, self.load_external_subs, self.output_format)
         t.finished_signal.connect(self.on_done); self.threads.append(t); t.start()
     def on_done(self, t):
