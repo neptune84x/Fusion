@@ -120,30 +120,30 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # -map_chapters 0 ile CHAPTERS korunuyor. -sn ile altyazı kalıntıları temizleniyor.
+            # Chapters korunuyor, sbtl kalıntıları temizleniyor.
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box v26.02 için optimize edilmiş komut dizisi:
-            # -inter 500: Apple için ideal atom aralığı.
-            # -flat: Parçalanmamış, düz yapı zorlaması.
-            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-flat", "-inter", "500"]
+            # GPAC 26.02 için en katı parametreler
+            # -optimize: stbl/moov atomlarını en öne çeker (Sarma sorunu çözümü)
+            # -brand mp42: Apple uyumluluğu zorlaması
+            box_cmd = [mp4box, "-brand", "mp42", "-new", "-optimize", "-itags", "tool=Fusion_v0.3.0"]
             
-            # Video ve ses eklenirken her birine :tight ekleyerek zamanlamayı sıkılaştırıyoruz
-            box_cmd.extend(["-add", f"{temp_mp4}#video:tight", "-add", f"{temp_mp4}#audio:tight"])
+            # Video ve Ses
+            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
-            # Altyazıları ekle (Sıralama ve Turkish'in sonda olması garanti)
+            # Altyazılar (Sadece wvtt olarak, sbtl moduna girmeden)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # Altyazı tracklerine de :tight ekleyerek donmayı engelliyoruz
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
+                # :fmt=wvtt ve :group=2 ile sbtl hayaletleşmesini önlüyoruz
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:fmt=wvtt:name={is_disabled}:tight"])
             
-            # -ipod bayrağı Apple "sbtl" muxing modunu tetikler.
-            box_cmd.extend(["-ipod", output_file])
+            # -remux bayrağı tüm track yapısını Apple'ın tanıyacağı düzene sokar
+            box_cmd.extend(["-remux", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu (Her zaman stabil)
+            # MKV Modu (Her zamanki gibi güvenli)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.9\n- Seek Stability (v26.02 Optimized)\n- Track-based Tight Muxing\n- Chapters Preservation.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.3.0\n- GPAC 26.02 Optimized\n- Hard-Remux for Seek Stability\n- Ghost sbtl Elimination\n- Chapters Restoration.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
