@@ -23,6 +23,14 @@ class ConversionThread(QThread):
             return os.path.join(sys._MEIPASS, "internal", name)
         return name
 
+    def clean_and_force_srt_italics(self, text):
+        if not text: return ""
+        text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
+        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>| </I>', '', text)
+        text = re.sub(r'\{[^\}]*\}', '', text)
+        return f"<i>{text.strip()}</i>"
+
     def convert_to_webvtt(self, srt_path, vtt_path):
         try:
             with open(srt_path, 'r', encoding='utf-8') as f:
@@ -33,6 +41,32 @@ class ConversionThread(QThread):
                     f.write(line.replace(',', '.'))
             return True
         except: return False
+
+    def process_ass_to_srt_with_italics(self, ass_path, srt_output_path):
+        try:
+            with open(ass_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                lines = f.readlines()
+            srt_content = []; counter = 1
+            for line in lines:
+                if line.startswith("Dialogue:"):
+                    parts = line.split(',', 9)
+                    if len(parts) >= 10:
+                        start_time = parts[1].replace('.', ',') + "0"
+                        end_time = parts[2].replace('.', ',') + "0"
+                        text = parts[9].strip()
+                        if "italic" in parts[3].lower() or "{\\i1}" in text:
+                            text = self.clean_and_force_srt_italics(text)
+                        else:
+                            text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
+                            text = re.sub(r'\{[^\}]*\}', '', text).strip()
+                        if text:
+                            srt_content.append(f"{counter}\n0{start_time[:-1]} --> 0{end_time[:-1]}\n{text}\n\n")
+                            counter += 1
+            with open(srt_output_path, 'w', encoding='utf-8-sig') as f:
+                f.writelines(srt_content)
+        except:
+            ffmpeg = self.get_bin('ffmpeg')
+            subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], capture_output=True)
 
     def run(self):
         ffmpeg = self.get_bin('ffmpeg')
@@ -60,56 +94,60 @@ class ConversionThread(QThread):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_srt], capture_output=True)
+            final_sub = temp_srt
             if self.output_format == "mp4_vtt":
                 temp_vtt = temp_srt.replace('.srt', '.vtt')
                 self.convert_to_webvtt(temp_srt, temp_vtt)
-                cleaned_list.append({'path': temp_vtt, 'lang': l_map.get(lang, lang)})
-            else:
-                cleaned_list.append({'path': temp_srt, 'lang': l_map.get(lang, lang)})
+                final_sub = temp_vtt
+            cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.load_external:
             for f in sorted(glob.glob(base_path + "*.*")):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
                     temp_srt = os.path.join(temp_dir, f"ext_{len(cleaned_list)}.srt")
-                    subprocess.run([ffmpeg, '-y', '-i', f, temp_srt], capture_output=True)
-                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
-                    lang = match.group(1) if match else "und"
+                    if f.lower().endswith('.ass'):
+                        self.process_ass_to_srt_with_italics(f, temp_srt)
+                    else:
+                        shutil.copy2(f, temp_srt)
+                    final_sub = temp_srt
                     if self.output_format == "mp4_vtt":
                         temp_vtt = temp_srt.replace('.srt', '.vtt')
                         self.convert_to_webvtt(temp_srt, temp_vtt)
-                        cleaned_list.append({'path': temp_vtt, 'lang': l_map.get(lang, lang)})
-                    else:
-                        cleaned_list.append({'path': temp_srt, 'lang': l_map.get(lang, lang)})
+                        final_sub = temp_vtt
+                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
+                    lang = match.group(1) if match else "und"
+                    cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
-            # 1. ADIM: Video ve Sesi Chapters ile birlikte geçici bir dosyaya al (hvc1 tag ile)
-            pure_mp4 = os.path.join(temp_dir, "pure.mp4")
+            temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
+            # -map_chapters 0 ile bölümleri koruyoruz, -map_metadata -1 ile eski gereksiz verileri siliyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
-                           '-c', 'copy', '-tag:v', 'hvc1', '-map_chapters', '0', '-movflags', '+faststart', pure_mp4], capture_output=True)
+                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
+                           '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # 2. ADIM: MP4Box ile birleştirme
-            # -brand mp42:isom -> Apple uyumluluğu
-            # -tight -inter 500 -> İleri/Geri sarma (Seeking) sorununu çözer
-            box_cmd = [mp4box, "-brand", "mp42:isom", "-new", "-tight", "-inter", "500"]
+            # MP4Box: -brand ve -ab en başta. -inter 100 ve -tight sarma akıcılığını sağlar.
+            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-tight", "-inter", "100"]
             
-            # Ana dosyayı ekle (Chapters buradan miras alınacak)
-            box_cmd.extend(["-add", f"{pure_mp4}"])
+            # Önce Video ve Sesi (Track 1-2) ekle
+            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
-            # Altyazıları ekle (Turkish sonda kalacak şekilde)
+            # Altyazıları ekle (Sıralama korundu)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2{is_disabled}"])
+                # :group=2 (subtitle) ve :tight parametresi Apple ekosistemi için kritik
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
             
-            box_cmd.append(output_file)
+            # -ipod bayrağı sbtl modunu ve atom dizilimini tetikler
+            box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu
+            # MKV Modu (Sarsılmaz yapı)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned_list):
                 cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_chapters', '0', output_file])
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
@@ -159,7 +197,7 @@ class SublerListWidget(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__(); self.setWindowTitle("Fusion"); self.resize(700, 550); self.setAcceptDrops(True); self.load_external_subs = True; self.output_format = "mp4_vtt"
+        super().__init__(); self.setWindowTitle("Fusion"); self.resize(700, 550); self.setAcceptDrops(True); self.load_external_subs = True; self.output_format = "mkv"
         main_v = QVBoxLayout(); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(0)
         toolbar = QWidget(); toolbar.setFixedHeight(75); toolbar.setStyleSheet("background: white; border: none;")
         t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(30, 0, 30, 0); t_lay.setSpacing(5)
@@ -183,9 +221,11 @@ class MainWindow(QMainWindow):
     def setup_menu(self):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about); am.addAction(a_about); am.addSeparator()
         a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
+        fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
+        em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.3.5\n- MP4Box 26.02 Seeking Fix\n- Chapter preservation fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.2.8\n- Butter-Smooth Seek (Inter 100ms)\n- Chapters Restoration\n- Subtitle Order & Visibility Fix.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
