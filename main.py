@@ -90,7 +90,6 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
         
         cleaned_list = []
-        # Dahili (Internal) Altyazıları Hazırla
         for i, sub in enumerate(internal_subs):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
@@ -102,7 +101,6 @@ class ConversionThread(QThread):
                 final_sub = temp_vtt
             cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
-        # Harici (External) Altyazıları Hazırla
         if self.load_external:
             for f in sorted(glob.glob(base_path + "*.*")):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
@@ -122,27 +120,28 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # Hayalet izleri temizlemek için -sn (subtitle none) ve metadata sıfırlama
+            # sbtl hayalet izini tamamen yok etmek için video ve sesi sıfır metadata ile çekiyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box Komutu: Brand zorlaması ve inter parçalama
-            box_cmd = [mp4box, "-brand", "mp42:isom", "-inter", "500", "-flat", "-new", output_file]
+            # MP4Box Kritik Parametre Dizilimi:
+            # -brand ve -ab en başta olmalı. -tight ve -inter 500 donmayı engeller.
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-ab", "mp42", "-tight", "-inter", "500", "-new", output_file]
             
-            # 1. Video ve Ses (Track 1 ve 2 olacaklar)
+            # Önce ana video ve sesi ekle (Track 1-2 kesinleşsin)
             box_cmd.extend(["-add", temp_mp4])
             
-            # 2. Altyazılar (Sırayla en sona eklenecekler)
+            # Sonra altyazıları tek tek ekle (En sona yerleşsinler)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # Her track için tight parametresi senkron ve sarma stabilitesi sağlar
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
+                # Her track eklemesinde group=2 (subtitle group) ve name ataması
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
             
             box_cmd.append("-ipod")
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu
+            # MKV Modu (Stabil)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -226,7 +225,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.4\n- Fixed missing subtitles.\n- Subtitles forced to the end.\n- Enhanced sbtl cleanup and seek stability.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.2.5\n- MPEG-4 v2 (mp42) Brand enforcement.\n- Smooth Seek Optimization (-tight -inter).\n- Track order fixed via import sequence.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
