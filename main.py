@@ -6,10 +6,7 @@ try:
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint
     from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence
 except ImportError:
-    print("Error: PyQt6 is not installed. Run 'pip install PyQt6'")
     sys.exit(1)
-
-# ... (ConversionThread ve FileWidget sınıfları yukarıdakiyle aynı kalacak) ...
 
 class ConversionThread(QThread):
     finished_signal = pyqtSignal(object)
@@ -21,14 +18,21 @@ class ConversionThread(QThread):
         self.load_external = load_external
         self.output_format = output_format
 
+    def get_bin(self, name):
+        """Binary yolunu PyInstaller uyumlu şekilde döner."""
+        if hasattr(sys, '_MEIPASS'):
+            return os.path.join(sys._MEIPASS, "internal", name)
+        return name
+
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>| </I>', '', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         text = re.sub(r'\{[^\}]*\}', '', text)
         return f"<i>{text.strip()}</i>"
 
     def convert_to_webvtt(self, srt_path, vtt_path):
+        """SRT dosyasını Apple uyumlu WebVTT formatına çevirir."""
         try:
             with open(srt_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -62,72 +66,88 @@ class ConversionThread(QThread):
             with open(srt_output_path, 'w', encoding='utf-8-sig') as f:
                 f.writelines(srt_content)
         except:
-            ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
-            subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ffmpeg = self.get_bin('ffmpeg')
+            subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], capture_output=True)
 
     def run(self):
-        ffmpeg = os.path.join(sys._MEIPASS, 'ffmpeg') if hasattr(sys, '_MEIPASS') else 'ffmpeg'
-        ffprobe = os.path.join(sys._MEIPASS, 'ffprobe') if hasattr(sys, '_MEIPASS') else 'ffprobe'
-        base_path = os.path.splitext(self.input_file)[0]
-        temp_dir_path = base_path + ".fusiontemp"
-        if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path)
-        os.makedirs(temp_dir_path, exist_ok=True)
+        ffmpeg = self.get_bin('ffmpeg')
+        ffprobe = self.get_bin('ffprobe')
+        mp4box = self.get_bin('mp4box')
         
-        output_ext = "mp4" if self.output_format == "mp4_vtt" else self.output_format
+        base_path = os.path.splitext(self.input_file)[0]
+        temp_dir = base_path + ".fusiontemp"
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        output_ext = "mp4" if self.output_format == "mp4_vtt" else "mkv"
         output_file = f"{base_path}_Fusion.{output_ext}"
         
+        # 1. Analiz
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
         
-        internal_subs = []
-        for s in info.get('streams', []):
-            if s.get('codec_type') == 'subtitle':
-                lang = s.get('tags', {}).get('language', 'und')
-                internal_subs.append({'index': s['index'], 'lang': lang})
+        internal_subs = [s for s in info.get('streams', []) if s.get('codec_type') == 'subtitle']
+        l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         
+        # 2. Altyazı Hazırlama
         cleaned_list = []
+        # Dahili olanlar
         for i, sub in enumerate(internal_subs):
-            temp_srt = os.path.join(temp_dir_path, f"int_{i}.srt")
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_srt], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            lang = sub.get('tags', {}).get('language', 'und')
+            temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_srt], capture_output=True)
+            
             final_sub = temp_srt
             if self.output_format == "mp4_vtt":
                 temp_vtt = temp_srt.replace('.srt', '.vtt')
                 if self.convert_to_webvtt(temp_srt, temp_vtt): final_sub = temp_vtt
-            cleaned_list.append({'path': final_sub, 'lang': sub['lang']})
-            
+            cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
+
+        # Harici olanlar
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
-                ext_check = f.lower()
-                if (ext_check.endswith('.srt') or ext_check.endswith('.ass')) and f != self.input_file:
-                    temp_srt = os.path.join(temp_dir_path, f"ext_{len(cleaned_list)}.srt")
-                    if ext_check.endswith('.ass'): self.process_ass_to_srt_with_italics(f, temp_srt)
+                if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
+                    temp_srt = os.path.join(temp_dir, f"ext_{len(cleaned_list)}.srt")
+                    if f.lower().endswith('.ass'): self.process_ass_to_srt_with_italics(f, temp_srt)
                     else: shutil.copy2(f, temp_srt)
+                    
                     final_sub = temp_srt
                     if self.output_format == "mp4_vtt":
                         temp_vtt = temp_srt.replace('.srt', '.vtt')
                         self.convert_to_webvtt(temp_srt, temp_vtt)
                         final_sub = temp_vtt
-                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', ext_check)
-                    cleaned_list.append({'path': final_sub, 'lang': match.group(1) if match else 'und'})
+                    
+                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
+                    lang = match.group(1) if match else "und"
+                    cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
-        cmd = [ffmpeg, '-y', '-i', self.input_file]
-        for c in cleaned_list: cmd.extend(['-i', c['path']])
-        cmd.extend(['-map', '0:v', '-map', '0:a?'])
-        l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
-        for i, c in enumerate(cleaned_list):
-            cmd.extend(['-map', str(i + 1)])
-            cmd.extend([f"-c:s:{i}", "webvtt" if self.output_format == "mp4_vtt" else "subrip"])
-            cmd.extend([f"-metadata:s:s:{i}", f"language={l_map.get(c['lang'], c['lang'])}", f"-metadata:s:s:{i}", "title="])
-        cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
-        if self.output_format == "mp4_vtt": cmd.extend(["-strict", "-2"])
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if os.path.exists(temp_dir_path): shutil.rmtree(temp_dir_path, ignore_errors=True)
+        # 3. Muxing (Birleştirme)
+        if self.output_format == "mp4_vtt":
+            temp_mp4 = os.path.join(temp_dir, "temp_remux.mp4")
+            # Önce video ve sesi FFmpeg ile kayıpsız MP4'e al
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', '-c', 'copy', temp_mp4], capture_output=True)
+            # MP4Box ile WebVTT'leri ekle
+            box_cmd = [mp4box, "-add", temp_mp4]
+            for c in cleaned_list:
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}"])
+            box_cmd.extend(["-new", output_file])
+            subprocess.run(box_cmd, capture_output=True)
+        else:
+            # Standart MKV Muxing
+            cmd = [ffmpeg, '-y', '-i', self.input_file]
+            for c in cleaned_list: cmd.extend(['-i', c['path']])
+            cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
+            for i, c in enumerate(cleaned_list):
+                cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
+            subprocess.run(cmd, capture_output=True)
+
+        if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# (MainWindow, FileWidget ve SublerListWidget sınıfları hata yakalayıcıya uyumlu olacak)
-# Not: MainWindow içinde setup_menu ve show_about mutlaka ekli olmalı.
+# --- GUI Bileşenleri ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
@@ -185,24 +205,41 @@ class MainWindow(QMainWindow):
         f_lay = QHBoxLayout(footer); f_lay.setContentsMargins(20, 0, 20, 0); self.st_lbl = QLabel("0 items."); self.pb = QProgressBar()
         self.pb.setFixedWidth(200); self.pb.setFixedHeight(6); self.pb.setTextVisible(False); self.pb.setStyleSheet("QProgressBar{background:#eee;border-radius:3px;border:none;} QProgressBar::chunk{background:#007aff; border-radius:3px;}")
         f_lay.addWidget(self.st_lbl); f_lay.addStretch(); f_lay.addWidget(self.pb); main_v.addWidget(toolbar); main_v.addWidget(self.scroll); main_v.addWidget(footer)
-        cw = QWidget(); cw.setLayout(main_v); self.setCentralWidget(cw); self.setup_menu(); self.add_btn.clicked.connect(self.open_files); self.start_btn.clicked.connect(self.start_processing); self.settings_btn.clicked.connect(self.show_settings_menu); self.threads = []; self.active_queue = []
+        cw = QWidget(); cw.setLayout(main_v); self.setCentralWidget(cw); self.setup_menu(); self.add_btn.clicked.connect(self.open_files)
+        self.start_btn.clicked.connect(self.start_processing); self.settings_btn.clicked.connect(self.show_settings_menu); self.threads = []; self.active_queue = []
+
     def create_nav_btn(self, icon, text):
         btn = QPushButton(); btn.setFixedSize(60, 65); btn.setStyleSheet("QPushButton{border:none; background:transparent;} QPushButton:hover{background:#f5f5f7; border-radius:10px;}")
         l = QVBoxLayout(btn); l.setContentsMargins(0,0,0,0); l.setSpacing(0); ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 26px; color: #1d1d1f;")
         tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 10px; color: #1d1d1f; font-weight: 500;")
         l.addWidget(ic); l.addWidget(tx); return btn
+
     def setup_menu(self):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about); am.addAction(a_about); am.addSeparator()
         a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
+
     def show_about(self):
-        msg = QMessageBox(self); msg.setWindowTitle("About Fusion"); msg.setText("<b>Fusion</b><br>Version: 0.1.0<br>Developer: Developer<br><br>High-performance media optimizer for Apple ecosystems."); msg.setInformativeText("Optimized for Infuse, Apple TV, and macOS."); msg.setIcon(QMessageBox.Icon.Information); msg.exec()
+        msg = QMessageBox(self); msg.setWindowTitle("About Fusion")
+        msg.setText("<b>Fusion</b><br>Version: 0.1.1<br>Developer: Neptune<br><br>High-performance media optimizer with MP4Box support.")
+        msg.setInformativeText("Optimized for Apple TV and Infuse."); msg.setIcon(QMessageBox.Icon.Information); msg.exec()
+
     def show_settings_menu(self):
-        menu = QMenu(self); act_sub = QAction("Load External Subtitles", self, checkable=True); act_sub.setChecked(self.load_external_subs); act_sub.triggered.connect(lambda s: setattr(self, 'load_external_subs', s)); menu.addAction(act_sub); menu.addSeparator()
-        fmt_group = QMenu("Output Format", self); a_mkv = QAction("Matroska (.mkv)", self, checkable=True); a_mkv.setChecked(self.output_format == "mkv"); a_mp4vtt = QAction("Apple MP4 (WebVTT)", self, checkable=True); a_mp4vtt.setChecked(self.output_format == "mp4_vtt")
-        def set_fmt(f): self.output_format = f; a_mkv.setChecked(f == "mkv"); a_mp4vtt.setChecked(f == "mp4_vtt")
-        a_mkv.triggered.connect(lambda: set_fmt("mkv")); a_mp4vtt.triggered.connect(lambda: set_fmt("mp4_vtt")); fmt_group.addAction(a_mkv); fmt_group.addAction(a_mp4vtt); menu.addMenu(fmt_group); menu.exec(self.settings_btn.mapToGlobal(QPoint(0, self.settings_btn.height())))
+        menu = QMenu(self)
+        act_sub = QAction("Load External Subtitles", self, checkable=True); act_sub.setChecked(self.load_external_subs)
+        act_sub.triggered.connect(lambda s: setattr(self, 'load_external_subs', s)); menu.addAction(act_sub); menu.addSeparator()
+        
+        fmt_menu = menu.addMenu("Output Format")
+        a_mkv = QAction("Matroska (.mkv)", self, checkable=True); a_mkv.setChecked(self.output_format == "mkv")
+        a_mp4 = QAction("Apple MP4 (WebVTT)", self, checkable=True); a_mp4.setChecked(self.output_format == "mp4_vtt")
+        
+        def set_fmt(f): self.output_format = f; a_mkv.setChecked(f == "mkv"); a_mp4.setChecked(f == "mp4_vtt")
+        a_mkv.triggered.connect(lambda: set_fmt("mkv")); a_mp4.triggered.connect(lambda: set_fmt("mp4_vtt"))
+        fmt_menu.addAction(a_mkv); fmt_menu.addAction(a_mp4)
+        
+        menu.exec(self.settings_btn.mapToGlobal(QPoint(0, self.settings_btn.height())))
+
     def remove_completed(self):
         to_rem = [i for i in self.container.items if i.status == "done"]
         for i in to_rem: self.container.items.remove(i); i.setParent(None)
@@ -224,22 +261,17 @@ class MainWindow(QMainWindow):
         if self.active_queue: self.process_next()
     def process_next(self):
         if not self.active_queue: self.st_lbl.setText("Completed."); return
-        item = self.active_queue.pop(0); item.set_status("working"); t = ConversionThread(item.full_path, item, self.load_external_subs, self.output_format); t.finished_signal.connect(self.on_done); self.threads.append(t); t.start()
+        item = self.active_queue.pop(0); item.set_status("working")
+        t = ConversionThread(item.full_path, item, self.load_external_subs, self.output_format)
+        t.finished_signal.connect(self.on_done); self.threads.append(t); t.start()
     def on_done(self, t):
         t.widget.set_status("done"); done = len([i for i in self.container.items if i.status == "done"]); total = len(self.container.items)
         if total > 0: self.pb.setValue(int((done / total) * 100))
         self.process_next()
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls(): e.accept()
-    def dropEvent(self, e): self.add_to_list([u.toLocalFile() for u in e.mimeData().urls()])
+    def dropEvent(self, e):
+        self.add_to_list([u.toLocalFile() for u in e.mimeData().urls()])
 
 if __name__ == "__main__":
-    try:
-        app = QApplication(sys.argv)
-        app.setStyle("macos")
-        w = MainWindow()
-        w.show()
-        sys.exit(app.exec())
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
+    app = QApplication(sys.argv); app.setStyle("macos"); w = MainWindow(); w.show(); sys.exit(app.exec())
