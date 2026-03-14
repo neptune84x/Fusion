@@ -125,20 +125,20 @@ class ConversionThread(QThread):
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box: -brand ve -ab en başta. -inter 100 ve -tight sarma akıcılığını sağlar.
-            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-tight", "-inter", "100"]
+            # MP4Box: mp42:isom yapısını kesin koruyoruz.
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-ab", "mp42"]
             
-            # Önce Video ve Sesi (Track 1-2) ekle
-            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
+            # Chapters (Bölümler) kaybolmasın diye #video ve #audio ayırmadan tüm dosyayı tek seferde ekliyoruz
+            box_cmd.extend(["-add", temp_mp4])
             
             # Altyazıları ekle (Sıralama korundu)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # :group=2 (subtitle) ve :tight parametresi Apple ekosistemi için kritik
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
+                # :tight kaldırıldı (sarma donmalarına sebep oluyordu)
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
             
-            # -ipod bayrağı sbtl modunu ve atom dizilimini tetikler
-            box_cmd.extend(["-ipod", output_file])
+            # İleri/geri sarma sorununu kökten çözen global interleaving komutları (-ipod, -tight, -inter 500)
+            box_cmd.extend(["-ipod", "-tight", "-inter", "500", "-new", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
             # MKV Modu (Sarsılmaz yapı)
@@ -225,7 +225,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.8\n- Butter-Smooth Seek (Inter 100ms)\n- Chapters Restoration\n- Subtitle Order & Visibility Fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.3.6\n- Apple Seek Stability Fixed\n- Chapters Preservation Maintained.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
