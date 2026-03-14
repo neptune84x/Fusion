@@ -25,7 +25,6 @@ class ConversionThread(QThread):
 
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
-        # \N karakterini gerçek alt satıra çevir
         text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
@@ -91,7 +90,7 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
         
         cleaned_list = []
-        # Önce Dahili (Internal) Altyazılar ekleniyor
+        # Dahili Altyazıları Hazırla
         for i, sub in enumerate(internal_subs):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
@@ -103,9 +102,9 @@ class ConversionThread(QThread):
                 final_sub = temp_vtt
             cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
-        # Sonra Harici (External) Altyazılar ekleniyor (MKV gibi en sonda görünmesi için)
+        # Harici Altyazıları Hazırla
         if self.load_external:
-            for f in glob.glob(base_path + "*.*"):
+            for f in sorted(glob.glob(base_path + "*.*")):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
                     temp_srt = os.path.join(temp_dir, f"ext_{len(cleaned_list)}.srt")
                     if f.lower().endswith('.ass'):
@@ -122,14 +121,14 @@ class ConversionThread(QThread):
                     cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
-            temp_mp4 = os.path.join(temp_dir, "video.mp4")
-            # Seeking/Donma fix: faststart ve hvc1 zorlaması
+            temp_mp4 = os.path.join(temp_dir, "video_clean.mp4")
+            # sbtl kalıntısını temizlemek için -sn ve brand zorlaması
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
-                           '-movflags', '+faststart', temp_mp4], capture_output=True)
+                           '-movflags', '+faststart', '-brand', 'mp42', temp_mp4], capture_output=True)
             
-            # MP4Box: -tight parametresi en başa alındı. Sarma optimizasyonları eklendi.
-            box_cmd = [mp4box, "-tight", "-inter", "500", "-flat", "-brand", "mp42:isom", "-add", temp_mp4]
+            # MP4Box: Brand mp42:isom en başa, video en başa, altyazılar en sona
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-tight", "-inter", "500", "-flat", "-add", temp_mp4]
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
@@ -137,7 +136,6 @@ class ConversionThread(QThread):
             box_cmd.extend(["-ipod", "-new", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu (Sıralama korundu)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -221,7 +219,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.1\n- Seek fix (inter, flat, faststart).\n- Subtitle sorting fixed (external at end).")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.2.2\n- Track order fixed (Subs at end).\n- Brand forced to mp42/isom.\n- Ghost sbtl track removed.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
