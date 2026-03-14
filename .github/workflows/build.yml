@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Download Multimedia Tools (FFmpeg, FFprobe, MP4Box)
+      - name: Download Multimedia Tools
         run: |
           # FFmpeg & FFprobe
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
@@ -23,14 +23,13 @@ jobs:
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # MP4Box (GPAC static binary for macOS)
-          # Not: Homebrew üzerinden çekip binary'i yerel klasöre alıyoruz
+          # MP4Box (GPAC) - Apple uyumluluğu için brew üzerinden statik çekiyoruz
           brew install gpac
           cp $(which mp4box) .
           
           chmod +x ffmpeg ffprobe mp4box
 
-      - name: Create ICNS from PNG
+      - name: Create ICNS
         run: |
           mkdir Fusion.iconset
           sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
@@ -41,7 +40,6 @@ jobs:
       - name: Build with PyInstaller
         run: |
           rm -rf build dist
-          # Binary'leri 'internal' klasörüne koyuyoruz (kodda get_bin buna göre güncellendi)
           python -m PyInstaller --noconfirm --onedir --windowed \
             --contents-directory "internal" \
             --add-binary "ffmpeg:internal" \
@@ -51,12 +49,12 @@ jobs:
             --name "Fusion" \
             main.py
 
-      - name: Compress App Bundle
+      - name: Compress
         run: |
           cd dist
           zip -y -r ../Fusion_Mac.zip Fusion.app
 
-      - name: Upload Artifact
+      - name: Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-App
