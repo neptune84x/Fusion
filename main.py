@@ -25,6 +25,9 @@ class ConversionThread(QThread):
 
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
+        # 1. Adım: \\N veya \N (satır başı) karakterlerini boşluğa çevir (Görseldeki sorunun çözümü)
+        text = text.replace(r'\N', ' ').replace(r'\\N', ' ')
+        # 2. Adım: İtalik ve diğer ASS/HTML etiketlerini temizle
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         text = re.sub(r'\{[^\}]*\}', '', text)
@@ -53,9 +56,12 @@ class ConversionThread(QThread):
                         start_time = parts[1].replace('.', ',') + "0"
                         end_time = parts[2].replace('.', ',') + "0"
                         text = parts[9].strip()
+                        # Stil veya metin içinde italik bilgisi varsa temizle ve <i> içine al
                         if "italic" in parts[3].lower() or "{\\i1}" in text:
                             text = self.clean_and_force_srt_italics(text)
                         else:
+                            # İtalik olmasa bile \\N gibi kodları temizle
+                            text = text.replace(r'\N', ' ').replace(r'\\N', ' ')
                             text = re.sub(r'\{[^\}]*\}', '', text).strip()
                         if text:
                             srt_content.append(f"{counter}\n0{start_time[:-1]} --> 0{end_time[:-1]}\n{text}\n\n")
@@ -121,8 +127,8 @@ class ConversionThread(QThread):
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', temp_mp4], capture_output=True)
             
-            # MP4Box kısmına -tight eklendi
-            box_cmd = [mp4box, "-brand", "mp42:isom", "-tight", "-add", temp_mp4]
+            # MP4Box: -tight flagı senkronizasyon ve sarma (seeking) stabilitesi için eklendi
+            box_cmd = [mp4box, "-tight", "-brand", "mp42:isom", "-add", temp_mp4]
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
@@ -213,7 +219,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.1.8\nAdded -tight flag.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.1.9\n- Fixed seeking freeze with -tight flag.\n- Cleaned \\N tags in subtitles.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
