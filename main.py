@@ -25,14 +25,14 @@ class ConversionThread(QThread):
 
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
-        # Tüm etiketleri sil, sadece italik kalsın
+        # Gereksiz tüm etiketleri temizle, sadece düz metin kalsın, sonra <i> içine al
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
         text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
         text = re.sub(r'\{[^\}]*\}', '', text)
         return f"<i>{text.strip()}</i>"
 
     def convert_to_webvtt(self, srt_path, vtt_path):
-        """SRT'yi Apple uyumlu WebVTT (noktalı zaman damgası) formatına çevirir."""
+        """QuickTime uyumlu WebVTT: Virgülleri noktaya çevirir."""
         try:
             with open(srt_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -91,7 +91,7 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita"}
         
         cleaned_list = []
-        # Dahili altyazıları işle
+        # Dahili altyazılar
         for i, sub in enumerate(internal_subs):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
@@ -104,7 +104,7 @@ class ConversionThread(QThread):
                 final_sub = temp_vtt
             cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
-        # Harici altyazıları işle (ve temizle)
+        # Harici altyazılar
         if self.load_external:
             for f in glob.glob(base_path + "*.*"):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
@@ -112,15 +112,7 @@ class ConversionThread(QThread):
                     if f.lower().endswith('.ass'):
                         self.process_ass_to_srt_with_italics(f, temp_srt)
                     else:
-                        # Harici SRT'yi de temizlikten geçir
-                        with open(f, 'r', encoding='utf-8', errors='ignore') as srt_in:
-                            lines = srt_in.readlines()
-                        with open(temp_srt, 'w', encoding='utf-8') as srt_out:
-                            for line in lines:
-                                if not line.strip().isdigit() and '-->' not in line:
-                                    srt_out.write(self.clean_and_force_srt_italics(line) + "\n")
-                                else:
-                                    srt_out.write(line)
+                        shutil.copy2(f, temp_srt)
                     
                     final_sub = temp_srt
                     if self.output_format == "mp4_vtt":
@@ -134,12 +126,13 @@ class ConversionThread(QThread):
 
         # MUXING
         if self.output_format == "mp4_vtt":
-            temp_mp4 = os.path.join(temp_dir, "media_only.mp4")
-            # Strateji: Metadata temizle (-map_metadata -1), Chapter koru (-map_chapters 0)
+            temp_mp4 = os.path.join(temp_dir, "media.mp4")
+            # Strateji: Metadata SİL (-map_metadata -1), Chapter KORU (-map_chapters 0)
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-map_metadata', '-1', '-map_chapters', '0', temp_mp4], capture_output=True)
             
-            # MP4Box ile Apple uyumlu tx3g/wvtt paketleme
+            # MP4Box ile Apple Uyumluluğu (tx3g/wvtt zorlaması)
+            # -ipod bayrağı ve :fmt=wvtt QuickTime hatasını çözer
             box_cmd = [mp4box, "-ipod", "-add", temp_mp4]
             for c in cleaned_list:
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:fmt=wvtt"])
@@ -158,7 +151,7 @@ class ConversionThread(QThread):
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- GUI Kısımları (Senin main.py yapın üzerine inşa edildi) ---
+# --- GUI Bileşenleri --- (Senin main.py yapına sadık kalındı)
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
@@ -238,15 +231,12 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         act_sub = QAction("Load External Subtitles", self, checkable=True); act_sub.setChecked(self.load_external_subs)
         act_sub.triggered.connect(lambda s: setattr(self, 'load_external_subs', s)); menu.addAction(act_sub); menu.addSeparator()
-        
         fmt_menu = menu.addMenu("Output Format")
         a_mkv = QAction("Matroska (.mkv)", self, checkable=True); a_mkv.setChecked(self.output_format == "mkv")
         a_mp4 = QAction("Apple MP4 (WebVTT)", self, checkable=True); a_mp4.setChecked(self.output_format == "mp4_vtt")
-        
         def set_fmt(f): self.output_format = f; a_mkv.setChecked(f == "mkv"); a_mp4.setChecked(f == "mp4_vtt")
         a_mkv.triggered.connect(lambda: set_fmt("mkv")); a_mp4.triggered.connect(lambda: set_fmt("mp4_vtt"))
         fmt_menu.addAction(a_mkv); fmt_menu.addAction(a_mp4)
-        
         menu.exec(self.settings_btn.mapToGlobal(QPoint(0, self.settings_btn.height())))
 
     def remove_completed(self):
