@@ -120,28 +120,28 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # sbtl hayalet izini tamamen yok etmek için video ve sesi sıfır metadata ile çekiyoruz
+            # Hayalet sbtl ve donma yapan eski metadataları tamamen kazıyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
-                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
+                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '-1', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box Kritik Parametre Dizilimi:
-            # -brand ve -ab en başta olmalı. -tight ve -inter 500 donmayı engeller.
-            box_cmd = [mp4box, "-brand", "mp42:isom", "-ab", "mp42", "-tight", "-inter", "500", "-new", output_file]
+            # MP4Box: -brand mp42 zorlaması ve -inter 500 (Akıcı sarma için)
+            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-flat", "-inter", "500"]
             
-            # Önce ana video ve sesi ekle (Track 1-2 kesinleşsin)
-            box_cmd.extend(["-add", temp_mp4])
+            # Video ve ses trackleri
+            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
-            # Sonra altyazıları tek tek ekle (En sona yerleşsinler)
+            # Altyazılar (Turkish sonda kalacak şekilde eklenir)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # Her track eklemesinde group=2 (subtitle group) ve name ataması
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
+                # :tight parametresini her altyazı track'ine ekliyoruz
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
             
-            box_cmd.append("-ipod")
+            # -ipod bayrağı Apple cihazlar için final optimizasyonudur
+            box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu (Stabil)
+            # MKV Modu
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
@@ -225,7 +225,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.5\n- MPEG-4 v2 (mp42) Brand enforcement.\n- Smooth Seek Optimization (-tight -inter).\n- Track order fixed via import sequence.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.2.7\n- Seek Stability (Interleaving 500ms)\n- Apple mp42 Profile Force\n- Clean metadata removal.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
