@@ -4,31 +4,31 @@ on: [push]
 jobs:
   build:
     runs-on: macos-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: pip install PyQt6 pyinstaller
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe (Apple Silicon)
+          # FFmpeg
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
-          
-          # MP4Box (GPAC) - Homebrew üzerinden Apple Silicon uyumlu kurulum
-          brew install gpac
-          
-          # Binary dosyasını çalışma dizinine kopyala (Yol garanti altına alındı)
-          cp $(which mp4box) ./mp4box
-          
+
+          # Latest GPAC (seek bug fixes)
+          brew install gpac --HEAD
+
+          cp $(which MP4Box) mp4box
+
           chmod +x ffmpeg ffprobe mp4box
 
       - name: Create ICNS
