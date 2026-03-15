@@ -21,43 +21,18 @@ jobs:
           # FFmpeg
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
+
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
 
-          # Latest GPAC (seek bug fixes)
-          brew install gpac --HEAD
+          # Homebrew fix
+          brew update
+          brew cleanup
+          rm -rf ~/Library/Caches/Homebrew/*
+
+          # GPAC install (stable)
+          brew install gpac
 
           cp $(which MP4Box) mp4box
 
           chmod +x ffmpeg ffprobe mp4box
-
-      - name: Create ICNS
-        run: |
-          mkdir Fusion.iconset
-          sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
-          sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
-          sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
-
-      - name: Build with PyInstaller
-        run: |
-          rm -rf build dist
-          python -m PyInstaller --noconfirm --onedir --windowed \
-            --contents-directory "internal" \
-            --add-binary "ffmpeg:internal" \
-            --add-binary "ffprobe:internal" \
-            --add-binary "mp4box:internal" \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
-
-      - name: Compress
-        run: |
-          cd dist
-          zip -y -r ../Fusion_Mac.zip Fusion.app
-
-      - name: Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Fusion-App
-          path: Fusion_Mac.zip
