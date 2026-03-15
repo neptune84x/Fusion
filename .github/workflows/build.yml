@@ -17,22 +17,18 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe indirme
+          # FFmpeg & FFprobe indirme (Apple Silicon)
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4 - VideoHelp Spesifik Link
-          # Linkteki yönlendirmeleri ve referer gereksinimlerini aşmak için -L ve -e kullanıyoruz
-          GPAC_URL="https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=qdDKDpfwKfHb"
-          curl -L "$GPAC_URL" -o gpac.pkg
+          # MP4Box (GPAC) Kurulumu - Brew ile en stabil sürüm
+          # Brew, macOS runner üzerinde Apple Silicon uyumlu en güncel/stabil sürümü (2.4+) kurar
+          brew install gpac
           
-          # Paketi yükle
-          sudo installer -pkg gpac.pkg -target /
-          
-          # Binary dosyasını 'mp4box' adıyla çalışma dizinine al
-          cp /Applications/GPAC.app/Contents/MacOS/MP4Box ./mp4box
+          # Kurulan binary'yi bul ve çalışma dizinine 'mp4box' adıyla kopyala
+          cp $(which MP4Box) ./mp4box
           
           chmod +x ffmpeg ffprobe mp4box
 
