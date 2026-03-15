@@ -23,23 +23,15 @@ jobs:
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # MP4Box (GPAC 2.4.0) - Kesin Sürüm Sabitleme
-          # GitHub'ın yönlendirmelerini (L) ve hata durumlarını (f) yöneterek indiriyoruz
-          URL="https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g5d96cb8b-master-macOS-aarch64.pkg"
-          echo "Downloading GPAC 2.4.0 from: $URL"
+          # GPAC 2.4 - VideoHelp Spesifik Link
+          # Linkteki yönlendirmeleri ve referer gereksinimlerini aşmak için -L ve -e kullanıyoruz
+          GPAC_URL="https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=qdDKDpfwKfHb"
+          curl -L "$GPAC_URL" -o gpac.pkg
           
-          curl -L -f "$URL" -o gpac.pkg
-          
-          # İndirme başarılı mı kontrolü (9 byte hatasını önlemek için)
-          FILESIZE=$(stat -f%z "gpac.pkg")
-          if [ $FILESIZE -lt 1000 ]; then
-            echo "Hata: Paket düzgün indirilemedi, dosya boyutu çok küçük!"
-            exit 1
-          fi
-
+          # Paketi yükle
           sudo installer -pkg gpac.pkg -target /
           
-          # Binary dosyasını çalışma dizinine alıyoruz
+          # Binary dosyasını 'mp4box' adıyla çalışma dizinine al
           cp /Applications/GPAC.app/Contents/MacOS/MP4Box ./mp4box
           
           chmod +x ffmpeg ffprobe mp4box
