@@ -17,18 +17,17 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe indirme (Apple Silicon)
+          # FFmpeg & FFprobe (Apple Silicon)
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # MP4Box (GPAC) Kurulumu - Brew ile en stabil sürüm
-          # Brew, macOS runner üzerinde Apple Silicon uyumlu en güncel/stabil sürümü (2.4+) kurar
+          # MP4Box (GPAC) - Homebrew üzerinden Apple Silicon uyumlu kurulum
           brew install gpac
           
-          # Kurulan binary'yi bul ve çalışma dizinine 'mp4box' adıyla kopyala
-          cp $(which MP4Box) ./mp4box
+          # Binary dosyasını çalışma dizinine kopyala (Yol garanti altına alındı)
+          cp $(which mp4box) ./mp4box
           
           chmod +x ffmpeg ffprobe mp4box
 
