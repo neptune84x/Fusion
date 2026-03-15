@@ -81,11 +81,28 @@ class ConversionThread(QThread):
         output_ext = "mp4" if self.output_format == "mp4_vtt" else "mkv"
         output_file = f"{base_path}_Fusion.{output_ext}"
         
+        # FFprobe ile Chapters (Bölümler) ve İsimleri Çıkartılıyor
         try:
-            probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
+            probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_chapters', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
         
+        chapters = info.get('chapters', [])
+        chapters_txt = os.path.join(temp_dir, "chapters.txt")
+        has_chapters = False
+        if chapters:
+            try:
+                with open(chapters_txt, 'w', encoding='utf-8') as f:
+                    for i, c in enumerate(chapters):
+                        start_time = float(c.get('start_time', 0))
+                        hours = int(start_time // 3600)
+                        minutes = int((start_time % 3600) // 60)
+                        seconds = start_time % 60
+                        title = c.get('tags', {}).get('title', f"Chapter {i+1}")
+                        f.write(f"{hours:02d}:{minutes:02d}:{seconds:06.3f} {title}\n")
+                has_chapters = True
+            except: pass
+
         internal_subs = [s for s in info.get('streams', []) if s.get('codec_type') == 'subtitle']
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
         
@@ -120,34 +137,40 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # -map_chapters 0 ile bölümleri koruyoruz, -map_metadata -1 ile eski gereksiz verileri siliyoruz
+            
+            # 1. FFmpeg ile gereksiz her şeyi (eski metadataları vb.) temizleyip temiz video+ses oluşturuyoruz
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
-                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
+                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '-1', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box: -brand ve -ab en başta. -inter 100 ve -tight sarma akıcılığını sağlar.
-            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-tight", "-inter", "100"]
+            # 2. MP4Box v2.4 Enjekte Aşaması:
+            # -brand mp42:isom yapısı ile tam Apple standartını belirtiyoruz.
+            box_cmd = [mp4box, "-brand", "mp42:isom", "-new"]
             
-            # Önce Video ve Sesi (Track 1-2) ekle
             box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
-            # Altyazıları ekle (Sıralama korundu)
+            # Altyazılar
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # :group=2 (subtitle) ve :tight parametresi Apple ekosistemi için kritik
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2{is_disabled}"])
             
-            # -ipod bayrağı sbtl modunu ve atom dizilimini tetikler
-            box_cmd.extend(["-ipod", output_file])
+            # Chapterlar çıkarttığımız txt dosyasından temizce gömülüyor
+            if has_chapters:
+                box_cmd.extend(["-chap", chapters_txt])
+            
+            # Sarma / Donma (Seeking) sorununu bitiren komutlar doğru konuma, en sona yerleştirildi.
+            box_cmd.extend(["-tight", "-inter", "500", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu (Sarsılmaz yapı)
+            # MKV Modu 
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned_list):
                 cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
+            
+            # -map_metadata:c 0:c -> Global metadatayı temizlerken (-1) Chapter başlıklarını koruyan kilit komut!
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_metadata:c', '0:c', '-map_chapters', '0', output_file])
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
@@ -225,7 +248,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.2.8\n- Butter-Smooth Seek (Inter 100ms)\n- Chapters Restoration\n- Subtitle Order & Visibility Fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.3.8\n- GPAC 2.4 Downgrade & Seek Fixes\n- MKV Chapter Titles Restored\n- MP4 Chapters Enforced.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
