@@ -17,38 +17,32 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe
+          # FFmpeg & FFprobe indirme
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # MP4Box (GPAC 2.4.0) - Apple uyumluluğu ve sarma sorunları için eski stabil sürüm
-          # Sistemin ARM64 (M serisi) mi yoksa Intel mi olduğunu bulup ona göre doğru paketi çekiyoruz
-          ARCH=$(uname -m)
-          if [ "$ARCH" = "arm64" ]; then
-            PKG_PATTERN="macOS-aarch64.pkg"
-            FALLBACK_URL="https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g5d96cb8b-master-macOS-aarch64.pkg"
-          else
-            PKG_PATTERN="macOS-x86_64.pkg"
-            FALLBACK_URL="https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g5d96cb8b-master-macOS-x86_64.pkg"
+          # MP4Box (GPAC 2.4.0) - Kesin Sürüm Sabitleme
+          # GitHub'ın yönlendirmelerini (L) ve hata durumlarını (f) yöneterek indiriyoruz
+          URL="https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g5d96cb8b-master-macOS-aarch64.pkg"
+          echo "Downloading GPAC 2.4.0 from: $URL"
+          
+          curl -L -f "$URL" -o gpac.pkg
+          
+          # İndirme başarılı mı kontrolü (9 byte hatasını önlemek için)
+          FILESIZE=$(stat -f%z "gpac.pkg")
+          if [ $FILESIZE -lt 1000 ]; then
+            echo "Hata: Paket düzgün indirilemedi, dosya boyutu çok küçük!"
+            exit 1
           fi
-          
-          ASSET_URL=$(curl -sL https://api.github.com/repos/gpac/gpac/releases/tags/v2.4.0 | grep browser_download_url | grep "$PKG_PATTERN" | cut -d '"' -f 4 | head -n 1)
-          
-          # Eğer GitHub API limitine takılırsak, garantili fallback linkini kullan
-          if [ -z "$ASSET_URL" ]; then
-            ASSET_URL="$FALLBACK_URL"
-          fi
-          
-          echo "Downloading GPAC from: $ASSET_URL"
-          curl -L "$ASSET_URL" -o gpac.pkg
-          
+
           sudo installer -pkg gpac.pkg -target /
-          cp /Applications/GPAC.app/Contents/MacOS/MP4Box .
           
-          chmod +x ffmpeg ffprobe MP4Box
-          mv MP4Box mp4box
+          # Binary dosyasını çalışma dizinine alıyoruz
+          cp /Applications/GPAC.app/Contents/MacOS/MP4Box ./mp4box
+          
+          chmod +x ffmpeg ffprobe mp4box
 
       - name: Create ICNS
         run: |
