@@ -23,23 +23,24 @@ jobs:
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4 (Intel version - VideoHelp)
+          # GPAC 2.4 (VideoHelp sürümü)
           curl -L "https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=sNFQLSQXxnlh" -o gpac.pkg
           
-          # Kurulum
-          sudo installer -pkg gpac.pkg -target /
+          # Paketi sisteme kurmadan manuel olarak açıyoruz
+          pkgutil --expand-full gpac.pkg gpac_extracted
           
-          # MP4Box'ı bul ve kopyala (Büyük/küçük harf duyarsız arama yapar)
-          MP4BOX_PATH=$(find /usr/local/bin /opt/gpac -iname "mp4box" 2>/dev/null | head -n 1)
-          if [ -z "$MP4BOX_PATH" ]; then
-            echo "HATA: MP4Box kurulum sonrası bulunamadı!"
+          # MP4Box dosyasını çıkartılan klasör içinde bul ve çalışma dizinine kopyala
+          # Genellikle gpac_extracted/Payload dizini içindedir
+          find gpac_extracted -iname "mp4box" -exec cp {} ./mp4box \;
+          
+          if [ ! -f "./mp4box" ]; then
+            echo "HATA: MP4Box paketten çıkartılamadı!"
             exit 1
           fi
           
-          cp "$MP4BOX_PATH" ./mp4box
           chmod +x ffmpeg ffprobe mp4box
           
-          # Sürüm kontrolü
+          # Sürüm kontrolü (Rosetta 2 otomatik devreye girecektir)
           ./mp4box -version
 
       - name: Create ICNS
