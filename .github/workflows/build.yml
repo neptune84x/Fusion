@@ -12,31 +12,28 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Python Dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Download Multimedia Tools
+      - name: Install GPAC 2.4 via Specific Brew Formula
         run: |
-          # 1. FFmpeg & FFprobe (ARM64)
-          curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg.zip
-          unzip -o ffmpeg.zip
-          curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
-          unzip -o ffprobe.zip
+          # GPAC 2.4 sürümüne ait olan Homebrew formula dosyasını doğrudan GitHub geçmişinden çekiyoruz
+          # Bu yöntem 'brew install gpac' komutunun aksine tam olarak 2.4 sürümünü kurar
+          brew install --formula https://raw.githubusercontent.com/Homebrew/homebrew-core/048d08c84306351833159981881775765792945a/Formula/g/gpac.rb
           
-          # 2. GPAC / MP4Box ve Bağımlılıkları (OpenSSL dahil)
-          curl -L "https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=sNFQLSQXxnlh" -o gpac.pkg
-          pkgutil --expand-full gpac.pkg gpac_extracted
+          # Bağımlılıklar için ffmpeg'i de kuralım
+          brew install ffmpeg
           
-          # Binary ve dylib'leri ayıkla
-          mkdir -p ./lib
-          find gpac_extracted -iname "mp4box" -exec cp {} ./mp4box \;
-          find gpac_extracted -name "*.dylib" -exec cp {} ./lib/ \;
-          
-          # Çalıştırma izinlerini ver
-          chmod +x ffmpeg ffprobe mp4box ./lib/*.dylib
-          
-          # GitHub Runner üzerinde MP4Box'ın çalışıp çalışmadığını test et
-          ./mp4box -version
+          # Versiyon doğrulaması (Build loglarında 2.4 olduğunu göreceksin)
+          mp4box -version
+
+      - name: Prepare Binaries
+        run: |
+          mkdir -p binaries
+          cp $(which ffmpeg) binaries/
+          cp $(which ffprobe) binaries/
+          cp $(which mp4box) binaries/
+          chmod +x binaries/*
 
       - name: Create ICNS
         run: |
@@ -44,7 +41,6 @@ jobs:
             mkdir Fusion.iconset
             sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
             sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
-            sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
             iconutil -c icns Fusion.iconset
           fi
 
@@ -53,28 +49,27 @@ jobs:
           rm -rf build dist
           python -m PyInstaller --noconfirm --onedir --windowed \
             --contents-directory "internal" \
-            --add-binary "ffmpeg:internal" \
-            --add-binary "ffprobe:internal" \
-            --add-binary "mp4box:internal" \
-            --add-binary "lib/*.dylib:internal/lib" \
+            --add-binary "binaries/ffmpeg:internal" \
+            --add-binary "binaries/ffprobe:internal" \
+            --add-binary "binaries/mp4box:internal" \
+            --osx-bundle-identifier "com.neptune.fusion" \
             ${{ hashFiles('Fusion.icns') != '' && '--icon Fusion.icns' || '' }} \
             --name "Fusion" \
             main.py
 
-      - name: Ad-Hoc Sign (Apple Silicon Fix)
+      - name: Deep Sign (Fixing SIGSEGV)
         run: |
-          # Uygulama paketini derinlemesine imzalar, M3 çiplerde çökmeyi engeller
+          # Uygulama içindeki tüm binary ve frameworkleri M3 (ARM64) mimarisine uygun şekilde imzalar
           codesign --force --deep --sign - dist/Fusion.app
 
-      - name: Package App as ZIP
+      - name: Compress
         run: |
-          # Dosya izinlerini ve paket yapısını korumak için ZIP şarttır
           cd dist
-          zip -r ../Fusion-Mac-ARM.zip Fusion.app
-          cd ..
+          # -y parametresi sembolik bağları (symlinks) korur, PyQt6 için kritiktir
+          zip -y -r ../Fusion_Mac.zip Fusion.app
 
-      - name: Upload Artifact
+      - name: Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App-Package
-          path: Fusion-Mac-ARM.zip
+          name: Fusion-App
+          path: Fusion_Mac.zip
