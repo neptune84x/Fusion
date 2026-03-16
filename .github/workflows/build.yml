@@ -17,25 +17,29 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe (ARM64 Native)
+          # FFmpeg & FFprobe (ARM64)
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4 (Intel - Rosetta ile çalışacak)
-          # VideoHelp doğrudan indirme linkini kullanıyoruz
+          # GPAC 2.4 (Intel version - VideoHelp)
           curl -L "https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=sNFQLSQXxnlh" -o gpac.pkg
           
-          # Boyut kontrolü (Boş dosya inmesini engeller)
-          if [ $(stat -f%z gpac.pkg) -lt 1000000 ]; then echo "HATA: GPAC indirilemedi!"; exit 1; fi
-          
-          # Kurulum ve MP4Box'ı çalışma dizinine alma
+          # Kurulum
           sudo installer -pkg gpac.pkg -target /
-          cp /usr/local/bin/MP4Box ./mp4box
           
+          # MP4Box'ı bul ve kopyala (Büyük/küçük harf duyarsız arama yapar)
+          MP4BOX_PATH=$(find /usr/local/bin /opt/gpac -iname "mp4box" 2>/dev/null | head -n 1)
+          if [ -z "$MP4BOX_PATH" ]; then
+            echo "HATA: MP4Box kurulum sonrası bulunamadı!"
+            exit 1
+          fi
+          
+          cp "$MP4BOX_PATH" ./mp4box
           chmod +x ffmpeg ffprobe mp4box
-          # Sürüm onayı (Loglarda 2.4 olduğunu göreceksiniz)
+          
+          # Sürüm kontrolü
           ./mp4box -version
 
       - name: Create ICNS
@@ -56,7 +60,7 @@ jobs:
             --add-binary "mp4box:internal" \
             --icon "Fusion.icns" \
             --name "Fusion" \
-            main.py
+            main-2.py
 
       - name: Artifact
         uses: actions/upload-artifact@v4
