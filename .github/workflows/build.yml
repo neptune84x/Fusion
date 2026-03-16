@@ -23,9 +23,10 @@ jobs:
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # MP4Box (GPAC) - En güvenli yöntem brew ile kurulumdur
-          brew install gpac
-          cp -L $(which mp4box) .
+          # GPAC 2.4 (macOS ARM64) - Tam Sürüm Kurulumu
+          curl -L https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg -o gpac.pkg
+          sudo installer -pkg gpac.pkg -target /
+          cp /usr/local/bin/MP4Box ./mp4box
           
           chmod +x ffmpeg ffprobe mp4box
 
@@ -49,13 +50,8 @@ jobs:
             --name "Fusion" \
             main.py
 
-      - name: Compress
-        run: |
-          cd dist
-          zip -y -r ../Fusion_Mac.zip Fusion.app
-
       - name: Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App
-          path: Fusion_Mac.zip
+          name: Fusion-App-Mac-ARM
+          path: dist/Fusion.app
