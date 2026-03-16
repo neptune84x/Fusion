@@ -60,7 +60,7 @@ jobs:
             --add-binary "mp4box:internal" \
             --icon "Fusion.icns" \
             --name "Fusion" \
-            main-2.py
+            main.py
 
       - name: Artifact
         uses: actions/upload-artifact@v4
