@@ -17,43 +17,36 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe (ARM64)
+          # 1. FFmpeg & FFprobe (ARM64)
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4 (VideoHelp)
+          # 2. GPAC / MP4Box ve Bağımlılıkları (OpenSSL dahil)
           curl -L "https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=sNFQLSQXxnlh" -o gpac.pkg
-          
-          # Paketi aç
           pkgutil --expand-full gpac.pkg gpac_extracted
           
-          # 1. MP4Box binary'sini al
-          find gpac_extracted -iname "mp4box" -exec cp {} ./mp4box \;
-          
-          # 2. Tüm kütüphaneleri (libgpac, libssl, libcrypto vb.) 'lib' klasörüne topla
+          # Binary ve dylib'leri ayıkla
           mkdir -p ./lib
+          find gpac_extracted -iname "mp4box" -exec cp {} ./mp4box \;
           find gpac_extracted -name "*.dylib" -exec cp {} ./lib/ \;
           
-          # Dosya kontrolü (En azından libgpac gelmiş mi?)
-          if [ ! -f "./lib/libgpac.dylib" ]; then
-            echo "HATA: Kütüphaneler paketten çıkartılamadı!"
-            exit 1
-          fi
-          
+          # Çalıştırma izinlerini ver
           chmod +x ffmpeg ffprobe mp4box ./lib/*.dylib
           
-          # Test
+          # GitHub Runner üzerinde MP4Box'ın çalışıp çalışmadığını test et
           ./mp4box -version
 
       - name: Create ICNS
         run: |
-          mkdir Fusion.iconset
-          sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
-          sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
-          sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
+          if [ -f "Fusion.png" ]; then
+            mkdir Fusion.iconset
+            sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
+            sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
+            sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
+            iconutil -c icns Fusion.iconset
+          fi
 
       - name: Build with PyInstaller
         run: |
@@ -64,12 +57,24 @@ jobs:
             --add-binary "ffprobe:internal" \
             --add-binary "mp4box:internal" \
             --add-binary "lib/*.dylib:internal/lib" \
-            --icon "Fusion.icns" \
+            ${{ hashFiles('Fusion.icns') != '' && '--icon Fusion.icns' || '' }} \
             --name "Fusion" \
-            main.py
+            main-2.py
 
-      - name: Artifact
+      - name: Ad-Hoc Sign (Apple Silicon Fix)
+        run: |
+          # Uygulama paketini derinlemesine imzalar, M3 çiplerde çökmeyi engeller
+          codesign --force --deep --sign - dist/Fusion.app
+
+      - name: Package App as ZIP
+        run: |
+          # Dosya izinlerini ve paket yapısını korumak için ZIP şarttır
+          cd dist
+          zip -r ../Fusion-Mac-ARM.zip Fusion.app
+          cd ..
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App-Mac-ARM
-          path: dist/Fusion.app
+          name: Fusion-App-Package
+          path: Fusion-Mac-ARM.zip
