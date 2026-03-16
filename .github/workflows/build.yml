@@ -23,24 +23,27 @@ jobs:
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4 (VideoHelp sürümü)
+          # GPAC 2.4 (VideoHelp)
           curl -L "https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=sNFQLSQXxnlh" -o gpac.pkg
           
-          # Paketi sisteme kurmadan manuel olarak açıyoruz
+          # Paketi aç
           pkgutil --expand-full gpac.pkg gpac_extracted
           
-          # MP4Box dosyasını çıkartılan klasör içinde bul ve çalışma dizinine kopyala
-          # Genellikle gpac_extracted/Payload dizini içindedir
+          # Binary'yi al
           find gpac_extracted -iname "mp4box" -exec cp {} ./mp4box \;
           
-          if [ ! -f "./mp4box" ]; then
-            echo "HATA: MP4Box paketten çıkartılamadı!"
+          # Kütüphaneyi (dylib) bul ve 'lib' klasörüne koy (mp4box bunu @executable_path/lib/ altında arıyor)
+          mkdir -p ./lib
+          find gpac_extracted -iname "libgpac.dylib" -exec cp {} ./lib/libgpac.dylib \;
+          
+          if [ ! -f "./lib/libgpac.dylib" ]; then
+            echo "HATA: libgpac.dylib bulunamadı!"
             exit 1
           fi
           
-          chmod +x ffmpeg ffprobe mp4box
+          chmod +x ffmpeg ffprobe mp4box ./lib/libgpac.dylib
           
-          # Sürüm kontrolü (Rosetta 2 otomatik devreye girecektir)
+          # Test (Kütüphane artık yanındaki 'lib' klasöründe olduğu için çalışacak)
           ./mp4box -version
 
       - name: Create ICNS
@@ -59,6 +62,7 @@ jobs:
             --add-binary "ffmpeg:internal" \
             --add-binary "ffprobe:internal" \
             --add-binary "mp4box:internal" \
+            --add-binary "lib/libgpac.dylib:internal/lib" \
             --icon "Fusion.icns" \
             --name "Fusion" \
             main.py
