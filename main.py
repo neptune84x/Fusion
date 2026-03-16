@@ -81,13 +81,13 @@ class ConversionThread(QThread):
         output_ext = "mp4" if self.output_format == "mp4_vtt" else "mkv"
         output_file = f"{base_path}_Fusion.{output_ext}"
         
-        # Metadata ve Chapters okuma (MP4 için çıkartılıyor)
+        # FFprobe ile yayınları ve Bölüm (Chapter) bilgilerini alıyoruz
         try:
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_chapters', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
         
-        # MP4 formatında kaybolan bölümleri gömmek için txt dosyası oluşturuyoruz
+        # MP4 için Chapters'ı txt dosyasına hazırlıyoruz
         chapters = info.get('chapters', [])
         chap_file = os.path.join(temp_dir, 'chapters.txt')
         has_chaps = False
@@ -138,38 +138,38 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # Sadece video ve ses izini saf olarak çıkartıyoruz. Metadata ve chapter'ları tamamen engelliyoruz
+            # 1. FFmpeg ile saf kaynak çıkarma. Metadata ve eski bölümleri temizle.
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
                            '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '-1', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box Başlangıç Komutları (Doğru sıralama)
-            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42"]
+            # MP4Box dizilimi
+            box_cmd = [mp4box]
             
-            # Video ve sesi ekle
             box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
-            # Altyazıları ekle: name= parametresindeki boşluk '@GPAC' çöpünü temizler
+            # Altyazıları ekle: name= (boşluk bırakıldı ki @GPAC damgası oluşmasın)
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name= {is_disabled}"])
             
-            # Bölümleri kesin ekle
+            # Chapters (Bölümleri) kesin olarak ekle
             if has_chaps:
                 box_cmd.extend(["-chap", chap_file])
             
-            # Tereyağı sarma (Subler kalitesi) komutları en sona eklendi
-            box_cmd.extend(["-ipod", "-tight", "-inter", "500", "-new", output_file])
+            # TEREYAĞI SARMA AYARLARI (Subler Davranışı - İstenen Sırada Uygulanmıştır)
+            box_cmd.extend(["-inter", "500", "-tight", "-brand", "mp42:isom", "-ab", "mp42", "-ipod", "-new", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Modu
+            # MKV Modu (Chapter Metadata Korumasıyla Birlikte)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned_list):
                 cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
-            # -map_metadata:c 0:c -> Bölüm başlıklarını korur, diğer metadataları -1 ile siler
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_metadata:c', '0:c', '-map_chapters', '0', output_file])
+            
+            # Sadece Global ve Stream metadatalarını temizle, -map_chapters 0 ve -1 istisnası ile bölüm isimlerini koru
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata:g', '-1', '-map_metadata:s:v', '-1', '-map_metadata:s:a', '-1', '-map_chapters', '0', output_file])
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
@@ -219,4 +219,32 @@ class SublerListWidget(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__(); self.
+        super().__init__(); self.setWindowTitle("Fusion"); self.resize(700, 550); self.setAcceptDrops(True); self.load_external_subs = True; self.output_format = "mp4_vtt"
+        main_v = QVBoxLayout(); main_v.setContentsMargins(0,0,0,0); main_v.setSpacing(0)
+        toolbar = QWidget(); toolbar.setFixedHeight(75); toolbar.setStyleSheet("background: white; border: none;")
+        t_lay = QHBoxLayout(toolbar); t_lay.setContentsMargins(30, 0, 30, 0); t_lay.setSpacing(5)
+        self.start_btn = self.create_nav_btn("▶", "Start"); self.settings_btn = self.create_nav_btn("⚙", "Settings"); self.add_btn = self.create_nav_btn("＋", "Add Item")
+        t_lay.addStretch(); t_lay.addWidget(self.start_btn); t_lay.addWidget(self.settings_btn); t_lay.addWidget(self.add_btn)
+        self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.container = SublerListWidget(self); self.scroll.setWidget(self.container)
+        footer = QWidget(); footer.setFixedHeight(45); footer.setStyleSheet("background: #fbfbfd; border-top: 1px solid #d1d1d6;")
+        f_lay = QHBoxLayout(footer); f_lay.setContentsMargins(20, 0, 20, 0); self.st_lbl = QLabel("0 items."); self.pb = QProgressBar()
+        self.pb.setFixedWidth(200); self.pb.setFixedHeight(6); self.pb.setTextVisible(False); self.pb.setStyleSheet("QProgressBar{background:#eee;border-radius:3px;border:none;} QProgressBar::chunk{background:#007aff; border-radius:3px;}")
+        f_lay.addWidget(self.st_lbl); f_lay.addStretch(); f_lay.addWidget(self.pb); main_v.addWidget(toolbar); main_v.addWidget(self.scroll); main_v.addWidget(footer)
+        cw = QWidget(); cw.setLayout(main_v); self.setCentralWidget(cw); self.setup_menu(); self.add_btn.clicked.connect(self.open_files)
+        self.start_btn.clicked.connect(self.start_processing); self.settings_btn.clicked.connect(self.show_settings_menu); self.threads = []; self.active_queue = []
+
+    def create_nav_btn(self, icon, text):
+        btn = QPushButton(); btn.setFixedSize(60, 65); btn.setStyleSheet("QPushButton{border:none; background:transparent;} QPushButton:hover{background:#f5f5f7; border-radius:10px;}")
+        l = QVBoxLayout(btn); l.setContentsMargins(0,0,0,0); l.setSpacing(0); ic = QLabel(icon); ic.setAlignment(Qt.AlignmentFlag.AlignCenter); ic.setStyleSheet("font-size: 26px; color: #1d1d1f;")
+        tx = QLabel(text); tx.setAlignment(Qt.AlignmentFlag.AlignCenter); tx.setStyleSheet("font-size: 10px; color: #1d1d1f; font-weight: 500;")
+        l.addWidget(ic); l.addWidget(tx); return btn
+
+    def setup_menu(self):
+        mb = self.menuBar(); am = mb.addMenu("Fusion"); a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about); am.addAction(a_about); am.addSeparator()
+        a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
+        fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
+        em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
+
+    def show_about(self):
+        QMessageBox.information(self, "About Fusion", "Fusion\n- Auto GPAC 2.4.0 API Fetcher\n- Subler Engine (Buttery Seek
