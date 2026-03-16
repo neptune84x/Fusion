@@ -23,15 +23,18 @@ jobs:
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4.0 (macOS ARM64) - Browser üzerinden gelen direkt link
-          # Bu link yönlendirme hatasını (9 byte sorunu) aşar.
-          curl -L "https://objects.githubusercontent.com/github-production-release-asset-2e65be/423712/17094042-3269-450a-8664-90426c63b45a?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=releaseassetproduction%2F20260316%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260316T170000Z&X-Amz-Expires=300&X-Amz-Signature=temporary_signature_logic&X-Amz-SignedHeaders=host&actor_id=0&key_id=0&repo_id=423712&response-content-disposition=attachment%3B%20filename%3Dgpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg&response-content-type=application%2Foctet-stream" -o gpac.pkg || \
-          curl -L "https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
+          # GPAC 2.4.0 (macOS ARM64) - Kesin Sürüm
+          # GitHub yönlendirme hatalarını aşmak için doğrudan gpac.io yönlendirmesini kullanıyoruz
+          curl -L "https://builds.gpac.io/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
 
-          # Eğer dosya hala 1KB'dan küçükse (indirme başarısızsa) hata ver ve dur
-          if [ $(stat -f%z gpac.pkg) -lt 1000 ]; then echo "HATA: GPAC indirilemedi!"; exit 1; fi
+          # Dosya boyutunu kontrol et (9 byte hatasını engellemek için)
+          FILESIZE=$(stat -f%z gpac.pkg)
+          if [ $FILESIZE -lt 1000000 ]; then
+            echo "HATA: GPAC paketi düzgün indirilemedi (Boyut: $FILESIZE byte). Link değişmiş olabilir."
+            exit 1
+          fi
 
-          # Kurulum ve Ayıklama
+          # Kurulum ve MP4Box ayıklama
           sudo installer -pkg gpac.pkg -target /
           cp /usr/local/bin/MP4Box ./mp4box
           
