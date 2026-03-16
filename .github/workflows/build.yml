@@ -59,7 +59,7 @@ jobs:
             --add-binary "lib/*.dylib:internal/lib" \
             ${{ hashFiles('Fusion.icns') != '' && '--icon Fusion.icns' || '' }} \
             --name "Fusion" \
-            main-2.py
+            main.py
 
       - name: Ad-Hoc Sign (Apple Silicon Fix)
         run: |
