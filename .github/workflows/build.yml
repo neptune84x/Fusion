@@ -15,33 +15,41 @@ jobs:
       - name: Install Python Dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Install GPAC 2.4 via Fixed Formula
+      - name: Install GPAC 2.4 (MP4Box Optimized)
         run: |
-          # 1. Bağımlılıkları kur
-          brew install ffmpeg libxml2 openssl@3 pkg-config
+          # 1. Sadece gerekli temel bağımlılıkları kur
+          brew install libxml2 openssl@3 pkg-config ffmpeg
           
-          # 2. Yerel bir tap oluştur
+          # 2. Yerel tap oluştur
           brew tap-new local/gpac
           TAP_PATH=$(brew --repository local/gpac)
           mkdir -p "$TAP_PATH/Formula"
 
-          # 3. GPAC 2.4 Formülünü Standart Make Hedefleriyle Güncelle
+          # 3. GPAC Formülünü FFmpeg kütüphane bağımlılığını kapatacak şekilde güncelle
           cat <<EOF > "$TAP_PATH/Formula/gpac.rb"
           class Gpac < Formula
-            desc "Multimedia framework for interactive and animated content"
+            desc "Multimedia framework - MP4Box focus"
             homepage "https://gpac.wp.imt.fr/"
             url "https://github.com/gpac/gpac/archive/refs/tags/v2.4.0.tar.gz"
             sha256 "99c8c994d5364b963d18eff24af2576b38d38b3460df27d451248982ea16157a"
             license "LGPL-2.1-or-later"
 
             depends_on "pkg-config" => :build
-            depends_on "ffmpeg"
             depends_on "libxml2"
             depends_on "openssl@3"
 
             def install
-              # Statik olmayan standart derleme (daha güvenli)
-              system "./configure", "--prefix=#{prefix}", "--disable-oss-audio", "--disable-jack"
+              # FFmpeg ve diğer uyumsuz filtreleri kapatıyoruz. 
+              # Bu sayede MP4Box sorunsuz derlenir.
+              args = %W[
+                --prefix=#{prefix}
+                --disable-ffmpeg
+                --disable-alsa
+                --disable-jack
+                --disable-oss-audio
+                --disable-x11
+              ]
+              system "./configure", *args
               system "make"
               system "make", "install"
             end
@@ -50,8 +58,6 @@ jobs:
 
           # 4. Kurulumu yap
           brew install local/gpac/gpac
-          
-          # Versiyon kontrolü
           mp4box -version
 
       - name: Prepare Binaries
@@ -76,7 +82,6 @@ jobs:
 
       - name: Deep Sign
         run: |
-          # Uygulamayı M3 mimarisi için imzalıyoruz
           codesign --force --deep --sign - dist/Fusion.app
 
       - name: Compress
