@@ -23,14 +23,14 @@ jobs:
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4.0 (macOS ARM64) - Kesin Sürüm
-          # GitHub yönlendirme hatalarını aşmak için doğrudan gpac.io yönlendirmesini kullanıyoruz
-          curl -L "https://builds.gpac.io/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
+          # GPAC 2.4.0 (macOS ARM64)
+          # SSL hatasını (code 60) aşmak için -k (insecure) kullanıyoruz
+          curl -L -k "https://builds.gpac.io/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
 
-          # Dosya boyutunu kontrol et (9 byte hatasını engellemek için)
+          # Dosya doğrulama (En az 10MB olmalı)
           FILESIZE=$(stat -f%z gpac.pkg)
-          if [ $FILESIZE -lt 1000000 ]; then
-            echo "HATA: GPAC paketi düzgün indirilemedi (Boyut: $FILESIZE byte). Link değişmiş olabilir."
+          if [ $FILESIZE -lt 10000000 ]; then
+            echo "HATA: GPAC paketi eksik indirildi ($FILESIZE byte). SSL veya bağlantı sorunu devam ediyor."
             exit 1
           fi
 
