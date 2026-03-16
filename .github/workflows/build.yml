@@ -25,13 +25,12 @@ jobs:
           TAP_PATH=$(brew --repository local/gpac)
           mkdir -p "$TAP_PATH/Formula"
 
-          # 3. GPAC 2.4 Formülünü DOĞRULANMIŞ SHA ile oluştur
+          # 3. GPAC 2.4 Formülünü Standart Make Hedefleriyle Güncelle
           cat <<EOF > "$TAP_PATH/Formula/gpac.rb"
           class Gpac < Formula
             desc "Multimedia framework for interactive and animated content"
             homepage "https://gpac.wp.imt.fr/"
             url "https://github.com/gpac/gpac/archive/refs/tags/v2.4.0.tar.gz"
-            # Hata mesajındaki güncel checksum kullanıldı:
             sha256 "99c8c994d5364b963d18eff24af2576b38d38b3460df27d451248982ea16157a"
             license "LGPL-2.1-or-later"
 
@@ -41,15 +40,15 @@ jobs:
             depends_on "openssl@3"
 
             def install
-              # Statik derleme uyumluluk ve boyut için daha iyidir
+              # Statik olmayan standart derleme (daha güvenli)
               system "./configure", "--prefix=#{prefix}", "--disable-oss-audio", "--disable-jack"
-              system "make", "inst_stat"
+              system "make"
               system "make", "install"
             end
           end
           EOF
 
-          # 4. Kurulumu yap (Kaynak koddan derleme yapılır)
+          # 4. Kurulumu yap
           brew install local/gpac/gpac
           
           # Versiyon kontrolü
@@ -77,7 +76,7 @@ jobs:
 
       - name: Deep Sign
         run: |
-          # Uygulama bütünlüğü için gerekli imzalama
+          # Uygulamayı M3 mimarisi için imzalıyoruz
           codesign --force --deep --sign - dist/Fusion.app
 
       - name: Compress
