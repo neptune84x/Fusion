@@ -1,4 +1,5 @@
 name: Build Fusion Mac
+
 on: [push]
 
 jobs:
@@ -6,18 +7,21 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Install dependencies
-        run: pip install PyQt6 pyinstaller
+      - name: Install Python Dependencies
+        run: |
+          pip install PyQt6 pyinstaller
 
       - name: Download Multimedia Tools
         run: |
+
           # FFmpeg
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
@@ -26,18 +30,20 @@ jobs:
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
 
-          # Homebrew cache fix (runner bug)
+          # Fix Homebrew cache bug
           brew update
           brew cleanup
           rm -rf ~/Library/Caches/Homebrew/*
 
-          # Install GPAC
+          # Install GPAC (MP4Box)
           brew install gpac
 
           # Copy MP4Box binary
           cp $(which MP4Box) mp4box
 
-          chmod +x ffmpeg ffprobe mp4box
+          chmod +x ffmpeg
+          chmod +x ffprobe
+          chmod +x mp4box
 
       - name: Create ICNS
         run: |
@@ -47,24 +53,32 @@ jobs:
           sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
           iconutil -c icns Fusion.iconset
 
-      - name: Build with PyInstaller
+      - name: Build App
         run: |
           rm -rf build dist
-          python -m PyInstaller --noconfirm --onedir --windowed \
-            --contents-directory "internal" \
-            --add-binary "ffmpeg:internal" \
-            --add-binary "ffprobe:internal" \
-            --add-binary "mp4box:internal" \
-            --icon "Fusion.icns" \
-            --name "Fusion" \
-            main.py
 
-      - name: Compress
+          python -m PyInstaller \
+          --noconfirm \
+          --onedir \
+          --windowed \
+          --name Fusion \
+          --icon Fusion.icns \
+          --contents-directory internal \
+          --add-binary "ffmpeg:internal/ffmpeg" \
+          --add-binary "ffprobe:internal/ffprobe" \
+          --add-binary "mp4box:internal/mp4box" \
+          main.py
+
+      - name: Verify internal binaries
+        run: |
+          ls -R dist/Fusion.app/Contents/MacOS
+
+      - name: Compress App
         run: |
           cd dist
           zip -y -r ../Fusion_Mac.zip Fusion.app
 
-      - name: Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-App
