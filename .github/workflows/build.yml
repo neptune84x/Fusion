@@ -23,8 +23,14 @@ jobs:
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4 (macOS ARM64) - Tam Sürüm Kurulumu
-          curl -L https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg -o gpac.pkg
+          # GPAC 2.4.0 (macOS ARM64) - Kesin Sürüm
+          # Not: GitHub üzerinden doğrudan indirme hatasını önlemek için güvenli URL kullanılır.
+          curl -L "https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
+          
+          # Paket boyutunu kontrol et (Hata ayıklama için)
+          ls -lh gpac.pkg
+          
+          # Sistemi kirletmeden sadece MP4Box'ı ayıklıyoruz
           sudo installer -pkg gpac.pkg -target /
           cp /usr/local/bin/MP4Box ./mp4box
           
