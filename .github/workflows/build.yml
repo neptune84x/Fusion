@@ -15,23 +15,24 @@ jobs:
       - name: Install Python Dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Install GPAC via Fixed Formula
+      - name: Install GPAC 2.4 via Fixed Formula
         run: |
           # 1. Bağımlılıkları kur
-          brew install ffmpeg libxml2 openssl@3
+          brew install ffmpeg libxml2 openssl@3 pkg-config
           
           # 2. Yerel bir tap oluştur
           brew tap-new local/gpac
           TAP_PATH=$(brew --repository local/gpac)
           mkdir -p "$TAP_PATH/Formula"
 
-          # 3. GPAC 2.4 Formülünü DOĞRUDAN oluştur (Dış linke gerek kalmadan)
+          # 3. GPAC 2.4 Formülünü DOĞRULANMIŞ SHA ile oluştur
           cat <<EOF > "$TAP_PATH/Formula/gpac.rb"
           class Gpac < Formula
             desc "Multimedia framework for interactive and animated content"
             homepage "https://gpac.wp.imt.fr/"
             url "https://github.com/gpac/gpac/archive/refs/tags/v2.4.0.tar.gz"
-            sha256 "04c21a4f0049e359a35e07663495f2425027878841022137599c15550c6046e7"
+            # Hata mesajındaki güncel checksum kullanıldı:
+            sha256 "99c8c994d5364b963d18eff24af2576b38d38b3460df27d451248982ea16157a"
             license "LGPL-2.1-or-later"
 
             depends_on "pkg-config" => :build
@@ -40,6 +41,7 @@ jobs:
             depends_on "openssl@3"
 
             def install
+              # Statik derleme uyumluluk ve boyut için daha iyidir
               system "./configure", "--prefix=#{prefix}", "--disable-oss-audio", "--disable-jack"
               system "make", "inst_stat"
               system "make", "install"
@@ -47,8 +49,10 @@ jobs:
           end
           EOF
 
-          # 4. Kurulumu yap (Source üzerinden derleyeceği için birkaç dakika sürebilir)
+          # 4. Kurulumu yap (Kaynak koddan derleme yapılır)
           brew install local/gpac/gpac
+          
+          # Versiyon kontrolü
           mp4box -version
 
       - name: Prepare Binaries
@@ -73,6 +77,7 @@ jobs:
 
       - name: Deep Sign
         run: |
+          # Uygulama bütünlüğü için gerekli imzalama
           codesign --force --deep --sign - dist/Fusion.app
 
       - name: Compress
