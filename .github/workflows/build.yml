@@ -17,37 +17,16 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe
+          # FFmpeg & FFprobe (ARM64)
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GitHub API kullanarak GPAC 2.4.0 sürümünün doğru macOS linkini dinamik olarak buluyoruz
-          cat << 'EOF' > get_gpac.py
-import urllib.request, json
-try:
-    req = urllib.request.urlopen("https://api.github.com/repos/gpac/gpac/releases/tags/v2.4.0")
-    assets = json.loads(req.read().decode("utf-8")).get("assets", [])
-    for a in assets:
-        if "macOS" in a["name"] and a["name"].endswith(".pkg"):
-            print(a["browser_download_url"])
-            break
-except:
-    pass
-EOF
-          GPAC_URL=$(python3 get_gpac.py)
+          # MP4Box (GPAC) - En güvenli yöntem brew ile kurulumdur
+          brew install gpac
+          cp -L $(which mp4box) .
           
-          if [ -z "$GPAC_URL" ]; then
-            echo "GPAC 2.4.0 paketi bulunamadı!"
-            exit 1
-          fi
-          
-          echo "İndiriliyor: $GPAC_URL"
-          curl -L -o gpac.pkg "$GPAC_URL"
-          
-          sudo installer -pkg gpac.pkg -target /
-          cp /Applications/GPAC.app/Contents/MacOS/MP4Box ./mp4box
           chmod +x ffmpeg ffprobe mp4box
 
       - name: Create ICNS
