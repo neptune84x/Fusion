@@ -23,11 +23,10 @@ jobs:
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # MP4Box (GPAC) - Apple uyumluluğu için brew üzerinden statik ve temiz çekiyoruz
-          brew install gpac
-          
-          # Binary kopyalama işleminde hata almamak için yolunu sağlama alıyoruz
-          cp $(which MP4Box || which mp4box) ./mp4box
+          # MP4Box (GPAC 2.4) - Doğrudan resmi 2.4 sürümü indiriliyor ve kuruluyor
+          curl -L -o gpac.pkg "https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g5d96cb8b-master-macOS-aarch64.pkg"
+          sudo installer -pkg gpac.pkg -target /
+          cp /Applications/GPAC.app/Contents/MacOS/MP4Box ./mp4box
           
           chmod +x ffmpeg ffprobe mp4box
 
