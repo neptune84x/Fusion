@@ -15,16 +15,22 @@ jobs:
       - name: Install Python Dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Install GPAC 2.4 via Local Formula
+      - name: Install GPAC 2.4 via Temporary Tap
         run: |
-          # 1. GPAC 2.4 sürümüne ait formula dosyasını indir
-          curl -L https://raw.githubusercontent.com/Homebrew/homebrew-core/048d08c84306351833159981881775765792945a/Formula/g/gpac.rb -o gpac_24.rb
-          
-          # 2. Bağımlılıkları önceden kur (Yükleme hızını artırır ve hataları önler)
+          # 1. Bağımlılıkları kur
           brew install ffmpeg libxml2 openssl@3
           
-          # 3. Yerel dosya üzerinden tam olarak 2.4 sürümünü yükle
-          brew install --formula ./gpac_24.rb
+          # 2. Sahte/Geçici bir yerel tap oluştur
+          brew tap-new local/gpac
+          
+          # 3. GPAC 2.4 formula dosyasını bu tap'in içine indir
+          # Not: Tap konumu genellikle /opt/homebrew/Library/Taps/local/homebrew-gpac/Formula/ olur
+          TAP_PATH=$(brew --repository local/gpac)
+          mkdir -p "$TAP_PATH/Formula"
+          curl -L https://raw.githubusercontent.com/Homebrew/homebrew-core/048d08c84306351833159981881775765792945a/Formula/g/gpac.rb -o "$TAP_PATH/Formula/gpac.rb"
+          
+          # 4. Artık bir tap içinde olduğu için yüklemeyi kabul edecektir
+          brew install local/gpac/gpac
           
           # Versiyon kontrolü
           mp4box -version
@@ -32,7 +38,6 @@ jobs:
       - name: Prepare Binaries
         run: |
           mkdir -p binaries
-          # Brew ile kurulan gerçek yolları kopyala
           cp $(which ffmpeg) binaries/
           cp $(which ffprobe) binaries/
           cp $(which mp4box) binaries/
@@ -61,16 +66,14 @@ jobs:
             --name "Fusion" \
             main.py
 
-      - name: Deep Sign for M3 Architecture
+      - name: Deep Sign for Apple Silicon
         run: |
-          # Önce iç dizini (internal) sonra ana paketi imzalar. 
-          # Bu adım SIGSEGV hatalarını önlemek için kritiktir.
+          # Uygulamayı imzalayarak yetkisiz kod çalıştırma hatalarını önle
           codesign --force --deep --sign - dist/Fusion.app
 
       - name: Compress
         run: |
           cd dist
-          # -y flag'i symlink yapılarını korur, uygulama bütünlüğü için şarttır.
           zip -y -r ../Fusion_Mac.zip Fusion.app
 
       - name: Artifact
