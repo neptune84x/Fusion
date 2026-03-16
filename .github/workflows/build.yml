@@ -29,21 +29,22 @@ jobs:
           # Paketi aç
           pkgutil --expand-full gpac.pkg gpac_extracted
           
-          # Binary'yi al
+          # 1. MP4Box binary'sini al
           find gpac_extracted -iname "mp4box" -exec cp {} ./mp4box \;
           
-          # Kütüphaneyi (dylib) bul ve 'lib' klasörüne koy (mp4box bunu @executable_path/lib/ altında arıyor)
+          # 2. Tüm kütüphaneleri (libgpac, libssl, libcrypto vb.) 'lib' klasörüne topla
           mkdir -p ./lib
-          find gpac_extracted -iname "libgpac.dylib" -exec cp {} ./lib/libgpac.dylib \;
+          find gpac_extracted -name "*.dylib" -exec cp {} ./lib/ \;
           
+          # Dosya kontrolü (En azından libgpac gelmiş mi?)
           if [ ! -f "./lib/libgpac.dylib" ]; then
-            echo "HATA: libgpac.dylib bulunamadı!"
+            echo "HATA: Kütüphaneler paketten çıkartılamadı!"
             exit 1
           fi
           
-          chmod +x ffmpeg ffprobe mp4box ./lib/libgpac.dylib
+          chmod +x ffmpeg ffprobe mp4box ./lib/*.dylib
           
-          # Test (Kütüphane artık yanındaki 'lib' klasöründe olduğu için çalışacak)
+          # Test
           ./mp4box -version
 
       - name: Create ICNS
@@ -62,7 +63,7 @@ jobs:
             --add-binary "ffmpeg:internal" \
             --add-binary "ffprobe:internal" \
             --add-binary "mp4box:internal" \
-            --add-binary "lib/libgpac.dylib:internal/lib" \
+            --add-binary "lib/*.dylib:internal/lib" \
             --icon "Fusion.icns" \
             --name "Fusion" \
             main.py
