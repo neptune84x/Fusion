@@ -15,24 +15,40 @@ jobs:
       - name: Install Python Dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Install GPAC 2.4 via Temporary Tap
+      - name: Install GPAC via Fixed Formula
         run: |
           # 1. Bağımlılıkları kur
           brew install ffmpeg libxml2 openssl@3
           
-          # 2. Sahte/Geçici bir yerel tap oluştur
+          # 2. Yerel bir tap oluştur
           brew tap-new local/gpac
-          
-          # 3. GPAC 2.4 formula dosyasını bu tap'in içine indir
-          # Not: Tap konumu genellikle /opt/homebrew/Library/Taps/local/homebrew-gpac/Formula/ olur
           TAP_PATH=$(brew --repository local/gpac)
           mkdir -p "$TAP_PATH/Formula"
-          curl -L https://raw.githubusercontent.com/Homebrew/homebrew-core/048d08c84306351833159981881775765792945a/Formula/g/gpac.rb -o "$TAP_PATH/Formula/gpac.rb"
-          
-          # 4. Artık bir tap içinde olduğu için yüklemeyi kabul edecektir
+
+          # 3. GPAC 2.4 Formülünü DOĞRUDAN oluştur (Dış linke gerek kalmadan)
+          cat <<EOF > "$TAP_PATH/Formula/gpac.rb"
+          class Gpac < Formula
+            desc "Multimedia framework for interactive and animated content"
+            homepage "https://gpac.wp.imt.fr/"
+            url "https://github.com/gpac/gpac/archive/refs/tags/v2.4.0.tar.gz"
+            sha256 "04c21a4f0049e359a35e07663495f2425027878841022137599c15550c6046e7"
+            license "LGPL-2.1-or-later"
+
+            depends_on "pkg-config" => :build
+            depends_on "ffmpeg"
+            depends_on "libxml2"
+            depends_on "openssl@3"
+
+            def install
+              system "./configure", "--prefix=#{prefix}", "--disable-oss-audio", "--disable-jack"
+              system "make", "inst_stat"
+              system "make", "install"
+            end
+          end
+          EOF
+
+          # 4. Kurulumu yap (Source üzerinden derleyeceği için birkaç dakika sürebilir)
           brew install local/gpac/gpac
-          
-          # Versiyon kontrolü
           mp4box -version
 
       - name: Prepare Binaries
@@ -43,16 +59,6 @@ jobs:
           cp $(which mp4box) binaries/
           chmod +x binaries/*
 
-      - name: Create ICNS
-        run: |
-          if [ -f "Fusion.png" ]; then
-            mkdir Fusion.iconset
-            sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
-            sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
-            sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
-            iconutil -c icns Fusion.iconset
-          fi
-
       - name: Build with PyInstaller
         run: |
           rm -rf build dist
@@ -62,13 +68,11 @@ jobs:
             --add-binary "binaries/ffprobe:internal" \
             --add-binary "binaries/mp4box:internal" \
             --osx-bundle-identifier "com.neptune.fusion" \
-            ${{ hashFiles('Fusion.icns') != '' && '--icon Fusion.icns' || '' }} \
             --name "Fusion" \
             main.py
 
-      - name: Deep Sign for Apple Silicon
+      - name: Deep Sign
         run: |
-          # Uygulamayı imzalayarak yetkisiz kod çalıştırma hatalarını önle
           codesign --force --deep --sign - dist/Fusion.app
 
       - name: Compress
