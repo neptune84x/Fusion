@@ -1,85 +1,130 @@
-name: Build Fusion Mac
+name: Build Fusion macOS
 
-on: [push]
+on:
+  workflow_dispatch:
+  push:
 
 jobs:
   build:
+
     runs-on: macos-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
+
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
-      - name: Install Python Dependencies
+
+      - name: Install Python deps
         run: |
-          pip install PyQt6 pyinstaller
+          python -m pip install --upgrade pip
+          pip install PyQt6 PyInstaller
 
-      - name: Download Multimedia Tools
+
+      # ------------------------------------------------
+      # Download ffmpeg / ffprobe
+      # ------------------------------------------------
+
+      - name: Download FFmpeg tools
         run: |
 
-          # FFmpeg
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
           unzip -o ffmpeg.zip
 
-          # FFprobe
           curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
           unzip -o ffprobe.zip
 
-          # Fix Homebrew cache bug
-          brew update
-          brew cleanup
-          rm -rf ~/Library/Caches/Homebrew/*
-
-          # Install GPAC (MP4Box)
-          brew install gpac
-
-          # Copy MP4Box binary
-          cp $(which MP4Box) mp4box
-
           chmod +x ffmpeg
           chmod +x ffprobe
+
+
+      # ------------------------------------------------
+      # Install GPAC (MP4Box)
+      # ------------------------------------------------
+
+      - name: Install GPAC
+        run: |
+
+          brew update
+          brew install gpac
+
+          cp "$(which MP4Box)" mp4box
           chmod +x mp4box
 
-      - name: Create ICNS
+
+      # ------------------------------------------------
+      # Create ICNS icon
+      # ------------------------------------------------
+
+      - name: Create icon
         run: |
+
           mkdir Fusion.iconset
+
           sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
           sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
           sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
+          sips -z 128 128 Fusion.png --out Fusion.iconset/icon_128x128.png
 
-      - name: Build App
+          iconutil -c icns Fusion.iconset -o Fusion.icns
+
+
+      # ------------------------------------------------
+      # Build App
+      # ------------------------------------------------
+
+      - name: Build with PyInstaller
         run: |
+
           rm -rf build dist
 
           python -m PyInstaller \
-          --noconfirm \
-          --onedir \
-          --windowed \
-          --name Fusion \
-          --icon Fusion.icns \
-          --contents-directory internal \
-          --add-binary "ffmpeg:internal/ffmpeg" \
-          --add-binary "ffprobe:internal/ffprobe" \
-          --add-binary "mp4box:internal/mp4box" \
-          main.py
+            --noconfirm \
+            --onedir \
+            --windowed \
+            --name Fusion \
+            --icon Fusion.icns \
+            --collect-all PyQt6 \
+            --add-binary "ffmpeg:internal" \
+            --add-binary "ffprobe:internal" \
+            --add-binary "mp4box:internal" \
+            main.py
 
-      - name: Verify internal binaries
+
+      # ------------------------------------------------
+      # Verify app layout
+      # ------------------------------------------------
+
+      - name: Verify structure
         run: |
+
+          echo "APP STRUCTURE:"
           ls -R dist/Fusion.app/Contents/MacOS
 
-      - name: Compress App
-        run: |
-          cd dist
-          zip -y -r ../Fusion_Mac.zip Fusion.app
 
-      - name: Upload Artifact
+      # ------------------------------------------------
+      # Zip app
+      # ------------------------------------------------
+
+      - name: Package app
+        run: |
+
+          cd dist
+          zip -r ../Fusion-macOS.zip Fusion.app
+
+
+      # ------------------------------------------------
+      # Upload artifact
+      # ------------------------------------------------
+
+      - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App
-          path: Fusion_Mac.zip
+          name: Fusion-macOS
+          path: Fusion-macOS.zip
