@@ -17,37 +17,26 @@ jobs:
 
       - name: Download Multimedia Tools
         run: |
-          # FFmpeg & FFprobe (ARM64)
+          # FFmpeg & FFprobe (ARM64 Native)
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip" -o ffmpeg.zip
           unzip -o ffmpeg.zip
           curl -L "https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip" -o ffprobe.zip
           unzip -o ffprobe.zip
           
-          # GPAC 2.4.0 (macOS ARM64) - Kesin ve Güvenli İndirme
-          # Önce ana sunucuyu, başarısız olursa GitHub direkt linkini dener.
-          # -k: SSL hatasını geçer, -L: Yönlendirmeyi takip eder, --retry: Bağlantı koparsa 3 kez dener.
-          curl -k -L --retry 3 "https://builds.gpac.io/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
-
-          # Dosya doğrulama (277 byte gibi hataları yakalar)
-          FILESIZE=$(stat -f%z gpac.pkg)
-          echo "Indirilen Dosya Boyutu: $FILESIZE byte"
+          # GPAC 2.4 (Intel - Rosetta ile çalışacak)
+          # VideoHelp doğrudan indirme linkini kullanıyoruz
+          curl -L "https://www.videohelp.com/download/gpac-2.4-rev0-g5d70253a-master.pkg?r=sNFQLSQXxnlh" -o gpac.pkg
           
-          if [ $FILESIZE -lt 1000000 ]; then
-            echo "Birinci link başarısız, alternatif GitHub linki deneniyor..."
-            curl -k -L "https://github.com/gpac/gpac/releases/download/v2.4.0/gpac-2.4.0-rev0-g4f83b8b6-master-arm64.pkg" -o gpac.pkg
-          fi
-
-          # Tekrar kontrol
-          if [ $(stat -f%z gpac.pkg) -lt 1000000 ]; then
-            echo "HATA: GPAC 2.4 indirilemedi. Lütfen repo ayarlarına gpac.pkg dosyasını manuel eklemeyi düşünün."
-            exit 1
-          fi
-
-          # Kurulum ve MP4Box ayıklama
+          # Boyut kontrolü (Boş dosya inmesini engeller)
+          if [ $(stat -f%z gpac.pkg) -lt 1000000 ]; then echo "HATA: GPAC indirilemedi!"; exit 1; fi
+          
+          # Kurulum ve MP4Box'ı çalışma dizinine alma
           sudo installer -pkg gpac.pkg -target /
           cp /usr/local/bin/MP4Box ./mp4box
           
           chmod +x ffmpeg ffprobe mp4box
+          # Sürüm onayı (Loglarda 2.4 olduğunu göreceksiniz)
+          ./mp4box -version
 
       - name: Create ICNS
         run: |
