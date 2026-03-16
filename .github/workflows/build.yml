@@ -15,21 +15,24 @@ jobs:
       - name: Install Python Dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Install GPAC 2.4 via Specific Brew Formula
+      - name: Install GPAC 2.4 via Local Formula
         run: |
-          # GPAC 2.4 sürümüne ait olan Homebrew formula dosyasını doğrudan GitHub geçmişinden çekiyoruz
-          # Bu yöntem 'brew install gpac' komutunun aksine tam olarak 2.4 sürümünü kurar
-          brew install --formula https://raw.githubusercontent.com/Homebrew/homebrew-core/048d08c84306351833159981881775765792945a/Formula/g/gpac.rb
+          # 1. GPAC 2.4 sürümüne ait formula dosyasını indir
+          curl -L https://raw.githubusercontent.com/Homebrew/homebrew-core/048d08c84306351833159981881775765792945a/Formula/g/gpac.rb -o gpac_24.rb
           
-          # Bağımlılıklar için ffmpeg'i de kuralım
-          brew install ffmpeg
+          # 2. Bağımlılıkları önceden kur (Yükleme hızını artırır ve hataları önler)
+          brew install ffmpeg libxml2 openssl@3
           
-          # Versiyon doğrulaması (Build loglarında 2.4 olduğunu göreceksin)
+          # 3. Yerel dosya üzerinden tam olarak 2.4 sürümünü yükle
+          brew install --formula ./gpac_24.rb
+          
+          # Versiyon kontrolü
           mp4box -version
 
       - name: Prepare Binaries
         run: |
           mkdir -p binaries
+          # Brew ile kurulan gerçek yolları kopyala
           cp $(which ffmpeg) binaries/
           cp $(which ffprobe) binaries/
           cp $(which mp4box) binaries/
@@ -41,6 +44,7 @@ jobs:
             mkdir Fusion.iconset
             sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
             sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
+            sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
             iconutil -c icns Fusion.iconset
           fi
 
@@ -57,15 +61,16 @@ jobs:
             --name "Fusion" \
             main.py
 
-      - name: Deep Sign (Fixing SIGSEGV)
+      - name: Deep Sign for M3 Architecture
         run: |
-          # Uygulama içindeki tüm binary ve frameworkleri M3 (ARM64) mimarisine uygun şekilde imzalar
+          # Önce iç dizini (internal) sonra ana paketi imzalar. 
+          # Bu adım SIGSEGV hatalarını önlemek için kritiktir.
           codesign --force --deep --sign - dist/Fusion.app
 
       - name: Compress
         run: |
           cd dist
-          # -y parametresi sembolik bağları (symlinks) korur, PyQt6 için kritiktir
+          # -y flag'i symlink yapılarını korur, uygulama bütünlüğü için şarttır.
           zip -y -r ../Fusion_Mac.zip Fusion.app
 
       - name: Artifact
