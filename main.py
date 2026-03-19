@@ -89,6 +89,10 @@ class ConversionThread(QThread):
         except: info = {}
         
         chaps = info.get('chapters', [])
+        video_stream = next((s for s in info.get('streams', []) if s.get('codec_type') == 'video'), None)
+        has_audio = any(s.get('codec_type') == 'audio' for s in info.get('streams', []))
+        is_hevc = video_stream and video_stream.get('codec_name') == 'hevc'
+
         internal_subs = [s for s in info.get('streams', []) if s.get('codec_type') == 'subtitle']
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
         
@@ -97,12 +101,15 @@ class ConversionThread(QThread):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_srt], capture_output=True)
-            final_sub = temp_srt
-            if self.output_format == "mp4_vtt":
-                temp_vtt = temp_srt.replace('.srt', '.vtt')
-                self.convert_to_webvtt(temp_srt, temp_vtt)
-                final_sub = temp_vtt
-            cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
+            
+            # 0 Byte Çökme Koruması: Sadece başarıyla çıkarılmış dolu altyazıları ekle
+            if os.path.exists(temp_srt) and os.path.getsize(temp_srt) > 0:
+                final_sub = temp_srt
+                if self.output_format == "mp4_vtt":
+                    temp_vtt = temp_srt.replace('.srt', '.vtt')
+                    self.convert_to_webvtt(temp_srt, temp_vtt)
+                    final_sub = temp_vtt
+                cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.load_external:
             for f in sorted(glob.glob(base_path + "*.*")):
@@ -112,39 +119,46 @@ class ConversionThread(QThread):
                         self.process_ass_to_srt_with_italics(f, temp_srt)
                     else:
                         shutil.copy2(f, temp_srt)
-                    final_sub = temp_srt
-                    if self.output_format == "mp4_vtt":
-                        temp_vtt = temp_srt.replace('.srt', '.vtt')
-                        self.convert_to_webvtt(temp_srt, temp_vtt)
-                        final_sub = temp_vtt
-                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
-                    lang = match.group(1) if match else "und"
-                    cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
+                    
+                    if os.path.exists(temp_srt) and os.path.getsize(temp_srt) > 0:
+                        final_sub = temp_srt
+                        if self.output_format == "mp4_vtt":
+                            temp_vtt = temp_srt.replace('.srt', '.vtt')
+                            self.convert_to_webvtt(temp_srt, temp_vtt)
+                            final_sub = temp_vtt
+                        match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
+                        lang = match.group(1) if match else "und"
+                        cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
             
-            # FFmpeg: Global metadata silinir (-map_metadata -1). Çökmeyi önlemek için chaps varsa chapter başlıkları kopyalanır.
-            ff_cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
-                      '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-movflags', '+faststart']
-            if chaps:
-                ff_cmd.extend(['-map_chapters', '0', '-map_metadata:c', '0:c'])
+            # FFmpeg: Global metadata silinir (-map_metadata -1). Çökmeyi önlemek için tag sadece HEVC ise eklenir.
+            ff_cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0']
+            if has_audio:
+                ff_cmd.extend(['-map', '0:a?'])
+            ff_cmd.extend(['-c', 'copy', '-sn', '-map_metadata', '-1', '-movflags', '+faststart'])
+            
+            if is_hevc:
+                ff_cmd.extend(['-tag:v', 'hvc1'])
+                
             ff_cmd.append(temp_mp4)
             subprocess.run(ff_cmd, capture_output=True)
             
-            # MP4Box: Brand ayarları düzeltildi (mp42 + isom), tight ve inter eklendi.
+            # MP4Box: Brand 4 karakter kuralına uygun hale getirildi. Global tight ve inter eklendi.
             box_cmd = [mp4box, "-brand", "mp42", "-ab", "isom", "-new", "-tight", "-inter", "500"]
             
-            # :forcesync sadece videoya eklendi (Sarma sorunu çözümü)
-            box_cmd.extend(["-add", f"{temp_mp4}#video:forcesync", "-add", f"{temp_mp4}#audio"])
+            # :forcesync SADECE video izine eklendi (Sarma sorununun kesin çözümü)
+            box_cmd.extend(["-add", f"{temp_mp4}#video:forcesync"])
+            if has_audio:
+                box_cmd.extend(["-add", f"{temp_mp4}#audio"])
             
             # Altyazılar
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # Hatalı :tight parametresi altyazıdan çıkarıldı, sadece :disable eklendi
                 box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2{is_disabled}"])
             
-            # MP4Box için özel txt tabanlı chapter enjeksiyonu (Apple uyumu için şarttır)
+            # MP4Box için TXT tabanlı Chapter (Bölüm) enjeksiyonu
             if chaps:
                 chapters_txt = os.path.join(temp_dir, "chapters.txt")
                 with open(chapters_txt, "w", encoding="utf-8") as f:
@@ -158,18 +172,24 @@ class ConversionThread(QThread):
             
             box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
+            
         else:
             # MKV Modu
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
-            cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
+            
+            cmd.extend(['-map', '0:v:0'])
+            if has_audio:
+                cmd.extend(['-map', '0:a?'])
+                
             for i, c in enumerate(cleaned_list):
                 cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
             
-            # Global metadata silinir (-map_metadata -1). Çökmeyi önlemek için chaps varsa başlıkları (0:c) koruruz.
+            # Global metadata silinir (-map_metadata -1). Chaps varsa Title'lar korunur (0:c).
             cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1'])
             if chaps:
                 cmd.extend(['-map_chapters', '0', '-map_metadata:c', '0:c'])
+                
             cmd.append(output_file)
             subprocess.run(cmd, capture_output=True)
 
@@ -249,7 +269,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.3.5\n- MP4Box Syntax Crash Fixed\n- Real Chapter Enjection\n- MKV 0-Byte Metadata Fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.3.5\n- MP4Box Syntax Crash Fixed\n- Real Chapter Injection\n- MKV 0-Byte Metadata Fix.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
