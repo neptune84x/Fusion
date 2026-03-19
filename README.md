@@ -1,50 +1,50 @@
 # 🌀 Fusion
 
 ![macOS](https://img.shields.io/badge/platform-macOS-000000.svg?style=for-the-badge&logo=apple&logoColor=white)
-![Python](https://img.shields.io/badge/python-3.10+-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)
+![Version](https://img.shields.io/badge/version-0.2.0-blue.svg?style=for-the-badge)
 ![FFmpeg](https://img.shields.io/badge/engine-FFmpeg-0078D4.svg?style=for-the-badge&logo=ffmpeg&logoColor=white)
 
-**Fusion** is a high-performance macOS utility designed to optimize media containers for Apple ecosystems (Infuse, Apple TV, macOS). It focuses on standardizing complex subtitle formats and media streams without compromising quality.
+**Fusion** is a streamlined macOS utility designed to optimize media containers for the Apple ecosystem (Infuse, Apple TV, and macOS). It focuses on standardizing subtitle formats and media streams to ensure perfect playback without quality loss.
+
+---
+
+## 🆕 What's New in v0.2.0
+
+- **Matroska (SubRip) Support:** Enhanced MKV output format with specialized SubRip subtitle mapping.
+- **Improved Chapter Preservation:** Refined logic to ensure chapter titles and markers remain intact during the remuxing process.
+- **Stable Release:** Optimized internal processing workflows for faster and more reliable conversion.
 
 ---
 
 ## ✨ Key Features
 
-### 🛡 Advanced Subtitle Engine
-- **Hard-Coded Italics:** Scans ASS/SSA files for italic codes (`{\i1}`, `Italics` styles) and injects Infuse-compliant `<i>` tags directly into the output.
-- **Dynamic Cleanup:** Strips unnecessary styling data (fonts, colors, positioning) to produce clean, standardized SRT tracks.
-- **Auto-Discovery:** Automatically detects and maps external `.ass` and `.srt` files based on language suffixes (e.g., `.tr`, `.en`, `.ru`).
+### 🛡 Smart Subtitle Handling
+- **Italics Preservation:** Automatically detects italic styles in ASS/SSA files and converts them into Infuse-compliant tags.
+- **Clean Output:** Strips unnecessary styling and fonts to produce standardized, easy-to-read subtitle tracks.
+- **Auto-Mapping:** Automatically pairs external `.srt` or `.ass` files with your video based on language suffixes.
 
-### ⚡ Lossless Optimization
-- **Zero Transcoding:** Muxes original video (HEVC/H.264) and audio (Atmos/AAC/DTS) streams directly (**Remuxing**).
-- **Metadata Integrity:** Preserves chapter markers, audio language tags, and global metadata during the conversion process.
+### ⚡ Lossless Remuxing
+- **No Quality Loss:** Copies original video and audio streams directly without re-encoding.
+- **Metadata Integrity:** Keeps your chapters, audio tags, and global metadata exactly as they should be.
 
-###  Native macOS Experience
-- **Modern Interface:** Built with PyQt6 featuring a native macOS "Squircle" icon and modern UI aesthetics.
-- **Drag & Drop:** Seamless queue management by dropping files directly into the workspace.
-- **Batch Management:** Native "Rubber Band" selection logic for managing multiple items simultaneously.
-- **Integrated Menu Bar:** Full support for standard macOS menus (**File**, **Edit**, **Settings**).
-
----
-
-## 🛠 Technical Stack
-- **Engine:** FFmpeg & FFprobe (Optimized for ARM64 and Intel).
-- **Frontend:** Python 3.10+ with an asynchronous PyQt6 architecture.
-- **Build Pipeline:** Automated CI/CD via GitHub Actions for `.app` bundling and `.icns` generation.
+###  Native macOS UI
+- **Modern Design:** A clean PyQt6 interface with native macOS aesthetics.
+- **Drag & Drop:** Simply drop your files into the app to start building your queue.
+- **Batch Actions:** Manage multiple files at once with intuitive selection and a native menu bar.
 
 ---
 
 ## 🚀 How to Use
 
-1. **Launch:** Open the Fusion application.
-2. **Import:** Drag your video files into the main window or use the **"Add Item"** button.
-3. **Configure:** Ensure "Load External Subtitles" is enabled in the **Settings** menu for external tracks.
-4. **Process:** Click **Start** and let Fusion handle the optimization in seconds.
-5. **Manage:** Use the **Edit** menu to remove selected items or clear completed tasks.
+1. **Launch:** Open the Fusion app.
+2. **Import:** Drag your video files into the window or click **"Add Item"**.
+3. **Configure:** Choose your output format (**Matroska (SubRip)** or **Apple MP4**) from the **Settings** menu.
+4. **Process:** Click **Start** to optimize your media in seconds.
+5. **Clean Up:** Use the **Edit** menu to clear completed tasks or remove items from the list.
 
 ---
 
-> **Note:** Fusion is specifically calibrated to solve the "missing italics" issue often encountered by Infuse users in anime and foreign language content.
+> **Note:** Fusion is specifically designed to solve common metadata and subtitle issues (like missing italics) encountered by high-fidelity media players on Apple devices.
 
 ---
-*Developed for high-fidelity media management on macOS.*
+*Optimized for high-fidelity media management on macOS.*
