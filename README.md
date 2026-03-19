@@ -57,6 +57,25 @@
 4.  **Process:** Click **Start** to optimize your media in seconds.
 5.  **Clean Up:** Use the **Edit** menu to clear completed tasks or remove items from the list.
 
+
+---
+
+
+## ☕ Support the Project
+
+If **Fusion** has saved you time and improved your media library, you can support its development through crypto. Every contribution helps keep the project alive and free!
+
+### 💎 Crypto Donation (USDT - TRC20)
+Using the **TRC-20** network ensures minimal transaction fees for you.
+
+| Asset | Network | Wallet Address |
+| :--- | :--- | :--- |
+| **USDT** | **TRC-20** | `TMSDJybXZDnvgUhcjbLeAgD7eDP3wsXXNN` |
+
+> **Note:** Please ensure you are using the **TRC-20 (Tron)** network before sending. 
+
+---
+
 ---
 
 *Optimized for high-fidelity media management on macOS.*
