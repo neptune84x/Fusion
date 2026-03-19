@@ -23,7 +23,6 @@ class ConversionThread(QThread):
             return os.path.join(sys._MEIPASS, "internal", name)
         return name
 
-    # İtalik koruma fonksiyonları (Dokunulmadı)
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
         text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
@@ -125,7 +124,6 @@ class ConversionThread(QThread):
                         cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
-            # MP4 BOX MODU (Dokunulmadı)
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
             ff_cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0']
             if has_audio: ff_cmd.extend(['-map', '0:a?'])
@@ -156,35 +154,34 @@ class ConversionThread(QThread):
             subprocess.run(box_cmd, capture_output=True)
             
         else:
-            # MKV FFMPEG MODU (METADATA TEMİZLİĞİ VE CHAPTER TITLE KORUMASI)
+            # MKV MODU: METADATA TEMİZ VE CHAPTER İSİMLERİ KORUNMUŞ
+            # Chapterları FFmpeg Metadata formatında bir dosyaya çıkartıyoruz
+            mkv_metadata = os.path.join(temp_dir, "mkv_meta.txt")
+            with open(mkv_metadata, "w", encoding="utf-8") as f:
+                f.write(";FFMETADATA1\n")
+                for c in chaps:
+                    f.write("\n[CHAPTER]\nTIMEBASE=1/1000\n")
+                    f.write(f"START={int(float(c['start_time'])*1000)}\n")
+                    f.write(f"END={int(float(c['end_time'])*1000)}\n")
+                    title = c.get('tags', {}).get('title') or f"Chapter {c.get('id', 0)}"
+                    f.write(f"title={title}\n")
+
             cmd = [ffmpeg, '-y', '-i', self.input_file]
-            for c in cleaned_list: 
-                cmd.extend(['-i', c['path']])
+            for c in cleaned_list: cmd.extend(['-i', c['path']])
+            # Metadata dosyasını ayrı bir input olarak ekle
+            cmd.extend(['-i', mkv_metadata])
             
-            cmd.extend(['-map', '0:v:0'])
-            if has_audio: 
-                cmd.extend(['-map', '0:a?'])
-            
+            cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned_list):
-                # Harici inputları (i+1) output altyazı akışlarına mapliyoruz
                 cmd.extend(['-map', f'{i+1}:0', f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
             
-            # KRİTİK NOKTA:
-            # -map_metadata -1: Tüm genel, video ve ses metadatalarını temizler.
-            # -map_metadata:g -1: Global metadataları temizler.
-            # -map_chapters 0: Chapterları (bölümleri) içeri aktarır.
-            # MKV'de chapter isimlerinin silinmemesi için sadece global metadayı hedefliyoruz.
-            
+            # -map_metadata -1 ile her şeyi sil, sonra -map_metadata en son input (meta dosyası) ile chapterları geri getir
             cmd.extend([
-                '-c:v', 'copy', 
-                '-c:a', 'copy', 
-                '-map_metadata', '-1',          # Genel temizlik
-                '-map_metadata:s:v', '-1',       # Video stream temizliği
-                '-map_metadata:s:a', '-1',       # Ses stream temizliği
-                '-map_chapters', '0',            # Chapterları ekle
+                '-c:v', 'copy', '-c:a', 'copy',
+                '-map_metadata', '-1', 
+                '-map_metadata', f'{len(cleaned_list)+1}', 
                 output_file
             ])
-            
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
@@ -261,7 +258,7 @@ class MainWindow(QMainWindow):
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.4.1\n- MKV Output Restored\n- Chapter Titles & Italics Preserved.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.4.2\n- MKV Metadata Cleaned\n- Chapter Titles & Italics Protected.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
