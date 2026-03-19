@@ -155,8 +155,8 @@ class ConversionThread(QThread):
             box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
             
-        else:
-            # MKV FFMPEG MODU (DÜZELTİLDİ - 0 BYTE HATASI GİDERİLDİ)
+else:
+            # MKV FFMPEG MODU (METADATA TEMİZLİĞİ VE CHAPTER TITLE KORUMASI)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: 
                 cmd.extend(['-i', c['path']])
@@ -169,9 +169,22 @@ class ConversionThread(QThread):
                 # Harici inputları (i+1) output altyazı akışlarına mapliyoruz
                 cmd.extend(['-map', f'{i+1}:0', f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
             
-            # -map_metadata -1 komutu MKV'de chapter başlıklarını sildiği/hata verdiği için kaldırıldı
-            # Varsayılan olarak metadata kopyalanacağı için Chapter başlıkları korunacaktır.
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_chapters', '0', output_file])
+            # KRİTİK NOKTA:
+            # -map_metadata -1: Tüm genel, video ve ses metadatalarını temizler.
+            # -map_metadata:g -1: Global metadataları temizler.
+            # -map_chapters 0: Chapterları (bölümleri) içeri aktarır.
+            # MKV'de chapter isimlerinin silinmemesi için sadece global metadayı hedefliyoruz.
+            
+            cmd.extend([
+                '-c:v', 'copy', 
+                '-c:a', 'copy', 
+                '-map_metadata', '-1',          # Genel temizlik
+                '-map_metadata:s:v', '-1',       # Video stream temizliği
+                '-map_metadata:s:a', '-1',       # Ses stream temizliği
+                '-map_chapters', '0',            # Chapterları ekle
+                output_file
+            ])
+            
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
