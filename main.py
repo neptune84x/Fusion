@@ -154,37 +154,42 @@ class ConversionThread(QThread):
             subprocess.run(box_cmd, capture_output=True)
             
         else:
-            # --- MKV STRATEJİSİ: CHAPTER İSİMLERİNİ KORUYARAK METADATA TEMİZLİĞİ ---
+            # --- MKV STRATEJİSİ: İSİMLİ CHAPTER KORUMA & METADATA TEMİZLİĞİ ---
             
-            # 1. Aşama: Mevcut MKV'den sadece chapter'ları isimleriyle birlikte dışa aktar (FFMETADATA formatı)
+            # 1. Aşama: FFmetadata dosyasını manuel oluştur (FFmpeg -f ffmetadata bazen isimleri kaçırabiliyor)
             metadata_file = os.path.join(temp_dir, "mkv_metadata_fixed.txt")
-            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', metadata_file], capture_output=True)
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                f.write(";FFMETADATA1\n")
+                for c in chaps:
+                    title = c.get('tags', {}).get('title') or f"Chapter {c.get('id', 0)}"
+                    f.write("\n[CHAPTER]\nTIMEBASE=1/1000\n")
+                    f.write(f"START={int(float(c['start_time'])*1000)}\n")
+                    f.write(f"END={int(float(c['end_time'])*1000)}\n")
+                    f.write(f"title={title}\n")
 
-            # 2. Aşama: Ana komutu kur
             cmd = [ffmpeg, '-y', '-i', self.input_file]
-            
-            # Altyazı dosyalarını ekle
             for c in cleaned_list: 
                 cmd.extend(['-i', c['path']])
             
-            # Dışa aktardığımız chapter dosyasını son input olarak ekle
+            # Metadata dosyasını son girdi (input) olarak ekle
             cmd.extend(['-i', metadata_file])
             
-            # Maplemeleri yap
+            # Haritalama
             cmd.extend(['-map', '0:v:0'])
-            if has_audio: 
-                cmd.extend(['-map', '0:a?'])
+            if has_audio: cmd.extend(['-map', '0:a?'])
             
             for i, c in enumerate(cleaned_list):
                 cmd.extend(['-map', f'{i+1}:0', f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
             
-            # 3. Aşama: Her şeyi temizle ve sadece chapter input'undaki veriyi (isimleri) geri yükle
+            # Meta dosyası en son input olduğu için indexi: len(cleaned_list) + 1
+            meta_idx = len(cleaned_list) + 1
+            
             cmd.extend([
                 '-c:v', 'copy', 
                 '-c:a', 'copy', 
-                '-map_metadata', '-1',                         # Tüm eski metadataları sil
-                '-map_metadata:g', f'{len(cleaned_list)+1}',   # Sadece sakladığımız metadata dosyasından global veriyi (chapter isimleri orada) al
-                '-map_chapters', f'{len(cleaned_list)+1}',     # Chapterları o dosyadan enjekte et
+                '-map_metadata', '-1',              # 1. Önce her şeyi sil
+                '-map_chapters', f'{meta_idx}',     # 2. Sadece meta dosyasından chapterları al
+                '-map_metadata', f'{meta_idx}',     # 3. Sadece meta dosyasından başlıkları (tags) al
                 output_file
             ])
             
@@ -264,7 +269,7 @@ class MainWindow(QMainWindow):
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.4.3\n- MKV Clean Metadata & Protected Chapters.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.4.4\n- MKV Chapter Titles Restored.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
