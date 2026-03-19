@@ -155,7 +155,7 @@ class ConversionThread(QThread):
             box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
             
-else:
+        else:
             # MKV FFMPEG MODU (METADATA TEMİZLİĞİ VE CHAPTER TITLE KORUMASI)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: 
