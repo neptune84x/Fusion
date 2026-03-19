@@ -8,6 +8,27 @@
 
 ---
 
+## 📸 Screenshots & Workflow
+
+### Application Interface
+<p align="center">
+  <img src="Screen/itemp.png" width="45%" alt="Add Items" />
+  <img src="Screen/work.png" width="45%" alt="Fusion in Action" />
+</p>
+<p align="center">
+  <img src="Screen/ch.png" width="45%" alt="Settings and Channels" />
+  <img src="Screen/redd.png" width="45%" alt="Task Completed" />
+</p>
+
+### Metadata & Subtitle Optimization (Before vs. After)
+<p align="center">
+  <img src="Screen/1.png" width="30%" alt="Original File" />
+  <img src="Screen/2.png" width="30%" alt="Processing" />
+  <img src="Screen/3.png" width="30%" alt="Clean Output" />
+</p>
+
+---
+
 ## 🎯 Who is Fusion For?
 
 **Fusion** is crafted for media enthusiasts and high-fidelity collectors who demand a seamless, clutter-free viewing experience on Apple devices. It is the perfect tool for:
@@ -25,41 +46,39 @@
 
 ## 🆕 What's New in v0.2.0
 
--   **Matroska (SubRip) Support:** Enhanced MKV output format with specialized SubRip subtitle mapping.
--   **Improved Chapter Preservation:** Refined logic to ensure chapter titles and markers remain intact during the remuxing process.
--   **Stable Release:** Optimized internal processing workflows for faster and more reliable conversion.
+- **Matroska (SubRip) Support:** Enhanced MKV output format with specialized SubRip subtitle mapping.
+- **Improved Chapter Preservation:** Refined logic to ensure chapter titles and markers remain intact during the remuxing process.
+- **Stable Release:** Optimized internal processing workflows for faster and more reliable conversion.
 
 ---
 
 ## ✨ Key Features
 
 ### 🛡 Smart Subtitle Handling
--   **Italics Preservation:** Automatically detects italic styles in ASS/SSA files and converts them into Infuse-compliant tags.
--   **Clean Output:** Strips unnecessary styling and fonts to produce standardized, easy-to-read subtitle tracks.
--   **Auto-Mapping:** Automatically pairs external files based on naming conventions and language suffixes.
+- **Italics Preservation:** Automatically detects italic styles in ASS/SSA files and converts them into Infuse-compliant tags.
+- **Clean Output:** Strips unnecessary styling and fonts to produce standardized, easy-to-read subtitle tracks.
+- **Auto-Mapping:** Automatically pairs external files based on naming conventions and language suffixes.
 
 ### ⚡ Lossless Remuxing
--   **No Quality Loss:** Copies original video (HEVC/H.264) and audio (Atmos/AAC/DTS) streams directly.
--   **Metadata Integrity:** Removes unwanted global tags while keeping your chapters and audio language info.
+- **No Quality Loss:** Copies original video (HEVC/H.264) and audio (Atmos/AAC/DTS) streams directly.
+- **Metadata Integrity:** Removes unwanted global tags while keeping your chapters and audio language info.
 
 ###  Native macOS UI
--   **Modern Design:** A clean PyQt6 interface with native macOS aesthetics.
--   **Drag & Drop:** Simply drop your files into the app to start building your queue.
--   **Batch Actions:** Manage multiple files at once with intuitive selection and a native menu bar.
+- **Modern Design:** A clean PyQt6 interface with native macOS aesthetics.
+- **Drag & Drop:** Simply drop your files into the app to start building your queue.
+- **Batch Actions:** Manage multiple files at once with intuitive selection and a native menu bar.
 
 ---
 
 ## 🚀 How to Use
 
-1.  **Launch:** Open the Fusion app.
-2.  **Import:** Drag your video files into the window or click **"Add Item"**.
-3.  **Configure:** Choose your output format (**Matroska (SubRip)** or **Apple MP4**) from the **Settings** menu.
-4.  **Process:** Click **Start** to optimize your media in seconds.
-5.  **Clean Up:** Use the **Edit** menu to clear completed tasks or remove items from the list.
-
+1. **Launch:** Open the Fusion app.
+2. **Import:** Drag your video files into the window or click **"Add Item"**.
+3. **Configure:** Choose your output format (**Matroska (SubRip)** or **Apple MP4**) from the **Settings** menu.
+4. **Process:** Click **Start** to optimize your media in seconds.
+5. **Clean Up:** Use the **Edit** menu to clear completed tasks or remove items from the list.
 
 ---
-
 
 ## ☕ Support the Project
 
@@ -73,8 +92,6 @@ Using the **TRC-20** network ensures minimal transaction fees for you.
 | **USDT** | **TRC-20** | `TMSDJybXZDnvgUhcjbLeAgD7eDP3wsXXNN` |
 
 > **Note:** Please ensure you are using the **TRC-20 (Tron)** network before sending. 
-
----
 
 ---
 
