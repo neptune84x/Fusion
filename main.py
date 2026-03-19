@@ -83,7 +83,8 @@ class ConversionThread(QThread):
         output_file = f"{base_path}_Fusion.{output_ext}"
         
         try:
-            probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
+            # -show_chapters eklendi ki chapter verilerini çekebilelim
+            probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_chapters', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
         
@@ -121,37 +122,60 @@ class ConversionThread(QThread):
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            # Clear global metadata (-map_metadata -1), keep chapters (-map_chapters 0)
+            
+            # 1. FFmpeg ile MP4 hazırlanır. Global metadata silinir, chapters korunur.
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
-                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
+                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', '-map_metadata:c', '0:c', 
                            '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            # MP4Box: mp42isom, tight, inter 500
+            # MP4Box Temel Ayarları: mp42isom, tight, inter 500
             box_cmd = [mp4box, "-brand", "mp42isom", "-ab", "mp42", "-new", "-tight", "-inter", "500"]
-            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
+            # 2. forcesync parametresi SADECE video izine uygulandı (Sarma sorunu çözümü)
+            box_cmd.extend(["-add", f"{temp_mp4}#video:forcesync", "-add", f"{temp_mp4}#audio"])
+            
+            # 3. Altyazılar eklenir
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                # :forcesync eklenerek sarma sorunu giderildi
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:forcesync:tight"])
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
             
+            # 4. FFprobe'dan alınan Chapter verileri MP4Box için özel txt dosyasına yazılır
+            chaps = info.get('chapters', [])
+            if chaps:
+                chapters_txt = os.path.join(temp_dir, "chapters.txt")
+                with open(chapters_txt, "w", encoding="utf-8") as f:
+                    for c in chaps:
+                        start = float(c.get('start_time', 0))
+                        hrs = int(start // 3600)
+                        mins = int((start % 3600) // 60)
+                        secs = start % 60
+                        tags = c.get('tags', {})
+                        title = tags.get('title') or tags.get('TITLE') or f"Chapter {c.get('id', 0)}"
+                        # MP4Box chapter format: HH:MM:SS.mmm Başlık
+                        f.write(f"{hrs:02d}:{mins:02d}:{secs:06.3f} {title}\n")
+                
+                # Oluşturulan chapter dosyası komuta eklenir
+                box_cmd.extend(["-chap", chapters_txt])
+            
+            # 5. Apple chapter/sbtl atom yapısı için -ipod eklenir ve çalıştırılır
             box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
         else:
-            # MKV Mode: Chapters & Titles preserved using -map_chapters 0
+            # MKV Modu: Chapter isimlerinin (title) kaybolmasını önlemek için -map_metadata:c 0:c eklendi
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
             cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned_list):
                 cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
-            # Global metadata silinir, chapterlar ve başlıkları korunur
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
+            
+            # -map_metadata -1 global veriyi siler, -map_chapters 0 bölümleri tutar, -map_metadata:c 0:c bölüm isimlerini tutar
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', '-map_metadata:c', '0:c', output_file])
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
-# --- UI CLASSES ---
+# --- Arayüz Sınıfları (Buraya Hiç Dokunulmadı) ---
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
@@ -225,7 +249,7 @@ class MainWindow(QMainWindow):
         em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.3.0\n- Sync Fix (:forcesync:)\n- Chapter Titles Restored\n- Optimized Apple Playback.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.3.1\n- Sync Fix Corrected (:forcesync:)\n- MP4 & MKV Chapter Titles Restored\n- Optimized Apple Playback.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
