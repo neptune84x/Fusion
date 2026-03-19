@@ -23,7 +23,7 @@ class ConversionThread(QThread):
             return os.path.join(sys._MEIPASS, "internal", name)
         return name
 
-    # main-2.py'den geri yüklenen italik koruma fonksiyonları
+    # İtalik koruma fonksiyonları (Dokunulmadı)
     def clean_and_force_srt_italics(self, text):
         if not text: return ""
         text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
@@ -125,7 +125,7 @@ class ConversionThread(QThread):
                         cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
-            # MP4 İŞLEME
+            # MP4 BOX MODU (Dokunulmadı)
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
             ff_cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0']
             if has_audio: ff_cmd.extend(['-map', '0:a?'])
@@ -156,22 +156,26 @@ class ConversionThread(QThread):
             subprocess.run(box_cmd, capture_output=True)
             
         else:
-            # MKV İŞLEME (CHAPTER TITLE FIX)
+            # MKV FFMPEG MODU (DÜZELTİLDİ - 0 BYTE HATASI GİDERİLDİ)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
-            for c in cleaned_list: cmd.extend(['-i', c['path']])
-            cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
-            for i, c in enumerate(cleaned_list):
-                cmd.extend(['-map', str(i+1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
+            for c in cleaned_list: 
+                cmd.extend(['-i', c['path']])
             
-            # -map_metadata:c 0 ile sadece chapter metadata'larını (başlıkları) koruyoruz
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_metadata:c', '0', '-map_chapters', '0', output_file])
+            cmd.extend(['-map', '0:v:0'])
+            if has_audio: 
+                cmd.extend(['-map', '0:a?'])
+            
+            for i, c in enumerate(cleaned_list):
+                # Harici inputları (i+1) output altyazı akışlarına mapliyoruz
+                cmd.extend(['-map', f'{i+1}:0', f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
+            
+            # -map_metadata -1 komutu MKV'de chapter başlıklarını sildiği/hata verdiği için kaldırıldı
+            # Varsayılan olarak metadata kopyalanacağı için Chapter başlıkları korunacaktır.
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_chapters', '0', output_file])
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
-
-# Diğer UI sınıfları (FileWidget, SublerListWidget, MainWindow) aynı şekilde devam ediyor...
-# [UI kodlarının geri kalanı burada mevcut, yer kaplamaması için özetlenmiştir ancak tam kodda hepsi korunmuştur]
 
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
@@ -244,7 +248,7 @@ class MainWindow(QMainWindow):
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.4.0\n- MKV Chapter Titles Fixed\n- ASS Italics Protection Restored.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.4.1\n- MKV Output Restored\n- Chapter Titles & Italics Preserved.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
