@@ -31,6 +31,17 @@ class ConversionThread(QThread):
         text = re.sub(r'\{[^\}]*\}', '', text)
         return f"<i>{text.strip()}</i>"
 
+    def convert_to_webvtt(self, srt_path, vtt_path):
+        try:
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            with open(vtt_path, 'w', encoding='utf-8') as f:
+                f.write("WEBVTT\n\n")
+                for line in lines:
+                    f.write(line.replace(',', '.'))
+            return True
+        except: return False
+
     def process_ass_to_srt_with_italics(self, ass_path, srt_output_path):
         try:
             with open(ass_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
@@ -57,19 +68,11 @@ class ConversionThread(QThread):
             ffmpeg = self.get_bin('ffmpeg')
             subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], capture_output=True)
 
-    def convert_to_webvtt(self, srt_path, vtt_path):
-        try:
-            with open(srt_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            with open(vtt_path, 'w', encoding='utf-8') as f:
-                f.write("WEBVTT\n\n")
-                for line in lines:
-                    f.write(line.replace(',', '.'))
-            return True
-        except: return False
-
     def run(self):
-        ffmpeg = self.get_bin('ffmpeg'); ffprobe = self.get_bin('ffprobe'); mp4box = self.get_bin('mp4box')
+        ffmpeg = self.get_bin('ffmpeg')
+        ffprobe = self.get_bin('ffprobe')
+        mp4box = self.get_bin('mp4box')
+        
         base_path = os.path.splitext(self.input_file)[0]
         temp_dir = base_path + ".fusiontemp"
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
@@ -79,14 +82,9 @@ class ConversionThread(QThread):
         output_file = f"{base_path}_Fusion.{output_ext}"
         
         try:
-            probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_chapters', self.input_file]
+            probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
-        
-        chaps = info.get('chapters', [])
-        video_stream = next((s for s in info.get('streams', []) if s.get('codec_type') == 'video'), None)
-        has_audio = any(s.get('codec_type') == 'audio' for s in info.get('streams', []))
-        is_hevc = video_stream and video_stream.get('codec_name') == 'hevc'
         
         internal_subs = [s for s in info.get('streams', []) if s.get('codec_type') == 'subtitle']
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
@@ -96,13 +94,12 @@ class ConversionThread(QThread):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_srt], capture_output=True)
-            if os.path.exists(temp_srt) and os.path.getsize(temp_srt) > 0:
-                final_sub = temp_srt
-                if self.output_format == "mp4_vtt":
-                    temp_vtt = temp_srt.replace('.srt', '.vtt')
-                    self.convert_to_webvtt(temp_srt, temp_vtt)
-                    final_sub = temp_vtt
-                cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
+            final_sub = temp_srt
+            if self.output_format == "mp4_vtt":
+                temp_vtt = temp_srt.replace('.srt', '.vtt')
+                self.convert_to_webvtt(temp_srt, temp_vtt)
+                final_sub = temp_vtt
+            cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.load_external:
             for f in sorted(glob.glob(base_path + "*.*")):
@@ -112,80 +109,37 @@ class ConversionThread(QThread):
                         self.process_ass_to_srt_with_italics(f, temp_srt)
                     else:
                         shutil.copy2(f, temp_srt)
-                    
-                    if os.path.exists(temp_srt) and os.path.getsize(temp_srt) > 0:
-                        final_sub = temp_srt
-                        if self.output_format == "mp4_vtt":
-                            temp_vtt = temp_srt.replace('.srt', '.vtt')
-                            self.convert_to_webvtt(temp_srt, temp_vtt)
-                            final_sub = temp_vtt
-                        match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
-                        lang = match.group(1) if match else "und"
-                        cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
+                    final_sub = temp_srt
+                    if self.output_format == "mp4_vtt":
+                        temp_vtt = temp_srt.replace('.srt', '.vtt')
+                        self.convert_to_webvtt(temp_srt, temp_vtt)
+                        final_sub = temp_vtt
+                    match = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', f.lower())
+                    lang = match.group(1) if match else "und"
+                    cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            ff_cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0']
-            if has_audio: ff_cmd.extend(['-map', '0:a?'])
-            ff_cmd.extend(['-c', 'copy', '-sn', '-map_metadata', '-1', '-movflags', '+faststart'])
-            if is_hevc: ff_cmd.extend(['-tag:v', 'hvc1'])
-            ff_cmd.append(temp_mp4)
-            subprocess.run(ff_cmd, capture_output=True)
+            subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0', '-map', '0:a?', 
+                           '-c', 'copy', '-tag:v', 'hvc1', '-sn', '-map_metadata', '-1', '-map_chapters', '0', 
+                           '-movflags', '+faststart', temp_mp4], capture_output=True)
             
-            box_cmd = [mp4box, "-brand", "mp42", "-ab", "isom", "-new", "-tight", "-inter", "500"]
-            box_cmd.extend(["-add", f"{temp_mp4}#video:forcesync:name="])
-            if has_audio: box_cmd.extend(["-add", f"{temp_mp4}#audio:name="])
+            box_cmd = [mp4box, "-brand", "mp42", "-ab", "mp42", "-new", "-tight", "-inter", "100"]
+            box_cmd.extend(["-add", f"{temp_mp4}#video", "-add", f"{temp_mp4}#audio"])
             
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
-            
-            if chaps:
-                chapters_txt = os.path.join(temp_dir, "chapters.txt")
-                with open(chapters_txt, "w", encoding="utf-8") as f:
-                    for c in chaps:
-                        start = float(c.get('start_time', 0))
-                        hrs = int(start // 3600); mins = int((start % 3600) // 60); secs = start % 60
-                        title = c.get('tags', {}).get('title') or f"Chapter {c.get('id', 0)}"
-                        f.write(f"{hrs:02d}:{mins:02d}:{secs:06.3f} {title}\n")
-                box_cmd.extend(["-chap", chapters_txt])
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}:tight"])
             
             box_cmd.extend(["-ipod", output_file])
             subprocess.run(box_cmd, capture_output=True)
-            
         else:
-            # --- MKV NOKTA ATIŞI CERRAHİ MÜDAHALE ---
-            metadata_file = os.path.join(temp_dir, "mkv_chaps.txt")
-            with open(metadata_file, "w", encoding="utf-8") as f:
-                f.write(";FFMETADATA1\n")
-                for c in chaps:
-                    t = c.get('tags', {}).get('title') or f"Chapter {c.get('id', 0)}"
-                    f.write("\n[CHAPTER]\nTIMEBASE=1/1000\n")
-                    f.write(f"START={int(float(c['start_time'])*1000)}\n")
-                    f.write(f"END={int(float(c['end_time'])*1000)}\n")
-                    f.write(f"title={t}\n") # Hem küçük harf
-                    f.write(f"TITLE={t}\n") # Hem büyük harf (garanti olsun)
-
             cmd = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned_list: cmd.extend(['-i', c['path']])
-            cmd.extend(['-i', metadata_file])
-            
-            cmd.extend(['-map', '0:v:0'])
-            if has_audio: cmd.extend(['-map', '0:a?'])
-            
+            cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned_list):
-                cmd.extend(['-map', f'{i+1}:0', f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
-            
-            meta_idx = len(cleaned_list) + 1
-            
-            # SIRALAMA ÇOK ÖNEMLİ: Önce global temizlik, sonra o temizliğin üzerine meta dosyasından chapter enjeksiyonu.
-            cmd.extend([
-                '-c:v', 'copy', 
-                '-c:a', 'copy', 
-                '-map_metadata', '-1',             # TEMİZLİK: Her şeyi süpür
-                '-map_chapters', f'{meta_idx}',    # ENJEKSİYON: Bölümleri ve isimlerini geri yükle
-                output_file
-            ])
+                cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0', output_file])
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
@@ -260,16 +214,19 @@ class MainWindow(QMainWindow):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about); am.addAction(a_about); am.addSeparator()
         a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
+        em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.4.5\n- MKV Chapter Precision Fix.")
+        # Versiyon 0.2.0 olarak güncellendi
+        QMessageBox.information(self, "About Fusion", "Fusion v0.2.0\n- Release Build\n- Subtitle Precision Mapping.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
         act_sub = QAction("Load External Subtitles", self, checkable=True); act_sub.setChecked(self.load_external_subs)
         act_sub.triggered.connect(lambda s: setattr(self, 'load_external_subs', s)); menu.addAction(act_sub); menu.addSeparator()
         fmt_menu = menu.addMenu("Output Format")
-        a_mkv = QAction("Matroska (.mkv)", self, checkable=True); a_mkv.setChecked(self.output_format == "mkv")
+        # Matroska seçeneği "Matroska (SubRip)" olarak güncellendi
+        a_mkv = QAction("Matroska (SubRip)", self, checkable=True); a_mkv.setChecked(self.output_format == "mkv")
         a_mp4 = QAction("Apple MP4 (WebVTT)", self, checkable=True); a_mp4.setChecked(self.output_format == "mp4_vtt")
         def set_fmt(f): self.output_format = f; a_mkv.setChecked(f == "mkv"); a_mp4.setChecked(f == "mp4_vtt")
         a_mkv.triggered.connect(lambda: set_fmt("mkv")); a_mp4.triggered.connect(lambda: set_fmt("mp4_vtt"))
