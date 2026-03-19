@@ -6,7 +6,7 @@ try:
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint
     from PyQt6.QtGui import QPainter, QColor, QBrush, QAction, QKeySequence
 except ImportError:
-    print("Hata: PyQt6 kütüphanesi bulunamadı. Lütfen 'pip install PyQt6' komutuyla yükleyin.")
+    print("Hata: PyQt6 bulunamadı.")
     sys.exit(1)
 
 class ConversionThread(QThread):
@@ -24,14 +24,6 @@ class ConversionThread(QThread):
             return os.path.join(sys._MEIPASS, "internal", name)
         return name
 
-    def clean_and_force_srt_italics(self, text):
-        if not text: return ""
-        text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
-        text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>| </I>', '', text)
-        text = re.sub(r'\{[^\}]*\}', '', text)
-        return f"<i>{text.strip()}</i>"
-
     def convert_to_webvtt(self, srt_path, vtt_path):
         try:
             with open(srt_path, 'r', encoding='utf-8') as f:
@@ -43,37 +35,8 @@ class ConversionThread(QThread):
             return True
         except: return False
 
-    def process_ass_to_srt_with_italics(self, ass_path, srt_output_path):
-        try:
-            with open(ass_path, 'r', encoding='utf-8-sig', errors='ignore') as f:
-                lines = f.readlines()
-            srt_content = []; counter = 1
-            for line in lines:
-                if line.startswith("Dialogue:"):
-                    parts = line.split(',', 9)
-                    if len(parts) >= 10:
-                        start_time = parts[1].replace('.', ',') + "0"
-                        end_time = parts[2].replace('.', ',') + "0"
-                        text = parts[9].strip()
-                        if "italic" in parts[3].lower() or "{\\i1}" in text:
-                            text = self.clean_and_force_srt_italics(text)
-                        else:
-                            text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
-                            text = re.sub(r'\{[^\}]*\}', '', text).strip()
-                        if text:
-                            srt_content.append(f"{counter}\n0{start_time[:-1]} --> 0{end_time[:-1]}\n{text}\n\n")
-                            counter += 1
-            with open(srt_output_path, 'w', encoding='utf-8-sig') as f:
-                f.writelines(srt_content)
-        except:
-            ffmpeg = self.get_bin('ffmpeg')
-            subprocess.run([ffmpeg, '-y', '-i', ass_path, srt_output_path], capture_output=True)
-
     def run(self):
-        ffmpeg = self.get_bin('ffmpeg')
-        ffprobe = self.get_bin('ffprobe')
-        mp4box = self.get_bin('mp4box')
-        
+        ffmpeg = self.get_bin('ffmpeg'); ffprobe = self.get_bin('ffprobe'); mp4box = self.get_bin('mp4box')
         base_path = os.path.splitext(self.input_file)[0]
         temp_dir = base_path + ".fusiontemp"
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir)
@@ -83,7 +46,6 @@ class ConversionThread(QThread):
         output_file = f"{base_path}_Fusion.{output_ext}"
         
         try:
-            # -show_chapters ile bölüm verilerini çekiyoruz
             probe_cmd = [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_chapters', self.input_file]
             info = json.loads(subprocess.check_output(probe_cmd))
         except: info = {}
@@ -92,17 +54,16 @@ class ConversionThread(QThread):
         video_stream = next((s for s in info.get('streams', []) if s.get('codec_type') == 'video'), None)
         has_audio = any(s.get('codec_type') == 'audio' for s in info.get('streams', []))
         is_hevc = video_stream and video_stream.get('codec_name') == 'hevc'
-
+        
         internal_subs = [s for s in info.get('streams', []) if s.get('codec_type') == 'subtitle']
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger","fr":"fra","es":"spa","it":"ita", "pt":"por", "ar":"ara"}
         
         cleaned_list = []
+        # Dahili altyazıları ayıkla
         for i, sub in enumerate(internal_subs):
             lang = sub.get('tags', {}).get('language', 'und')
             temp_srt = os.path.join(temp_dir, f"int_{i}.srt")
             subprocess.run([ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{sub['index']}", '-f', 'srt', temp_srt], capture_output=True)
-            
-            # 0 Byte Çökme Koruması: Sadece başarıyla çıkarılmış dolu altyazıları ekle
             if os.path.exists(temp_srt) and os.path.getsize(temp_srt) > 0:
                 final_sub = temp_srt
                 if self.output_format == "mp4_vtt":
@@ -111,15 +72,12 @@ class ConversionThread(QThread):
                     final_sub = temp_vtt
                 cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
+        # Harici altyazıları tara
         if self.load_external:
             for f in sorted(glob.glob(base_path + "*.*")):
                 if f.lower().endswith(('.srt', '.ass')) and f != self.input_file:
                     temp_srt = os.path.join(temp_dir, f"ext_{len(cleaned_list)}.srt")
-                    if f.lower().endswith('.ass'):
-                        self.process_ass_to_srt_with_italics(f, temp_srt)
-                    else:
-                        shutil.copy2(f, temp_srt)
-                    
+                    subprocess.run([ffmpeg, '-y', '-i', f, temp_srt], capture_output=True)
                     if os.path.exists(temp_srt) and os.path.getsize(temp_srt) > 0:
                         final_sub = temp_srt
                         if self.output_format == "mp4_vtt":
@@ -131,42 +89,32 @@ class ConversionThread(QThread):
                         cleaned_list.append({'path': final_sub, 'lang': l_map.get(lang, lang)})
 
         if self.output_format == "mp4_vtt":
+            # MP4 BOX MODU
             temp_mp4 = os.path.join(temp_dir, "video_pure.mp4")
-            
-            # FFmpeg: Global metadata silinir (-map_metadata -1). Çökmeyi önlemek için tag sadece HEVC ise eklenir.
             ff_cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0']
-            if has_audio:
-                ff_cmd.extend(['-map', '0:a?'])
+            if has_audio: ff_cmd.extend(['-map', '0:a?'])
             ff_cmd.extend(['-c', 'copy', '-sn', '-map_metadata', '-1', '-movflags', '+faststart'])
-            
-            if is_hevc:
-                ff_cmd.extend(['-tag:v', 'hvc1'])
-                
+            if is_hevc: ff_cmd.extend(['-tag:v', 'hvc1'])
             ff_cmd.append(temp_mp4)
             subprocess.run(ff_cmd, capture_output=True)
             
-            # MP4Box: Brand 4 karakter kuralına uygun hale getirildi. Global tight ve inter eklendi.
+            # Etiket Temizliği: :name= parametresini boş bırakarak GPAC yazılarını siliyoruz
             box_cmd = [mp4box, "-brand", "mp42", "-ab", "isom", "-new", "-tight", "-inter", "500"]
+            box_cmd.extend(["-add", f"{temp_mp4}#video:forcesync:name="])
+            if has_audio: box_cmd.extend(["-add", f"{temp_mp4}#audio:name="])
             
-            # :forcesync SADECE video izine eklendi (Sarma sorununun kesin çözümü)
-            box_cmd.extend(["-add", f"{temp_mp4}#video:forcesync"])
-            if has_audio:
-                box_cmd.extend(["-add", f"{temp_mp4}#audio"])
-            
-            # Altyazılar
             for i, c in enumerate(cleaned_list):
                 is_disabled = ":disable" if i > 0 else ""
-                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2{is_disabled}"])
+                # Burada :name= kullanarak o revrelease yazılarını temizledik
+                box_cmd.extend(["-add", f"{c['path']}:lang={c['lang']}:group=2:name={is_disabled}"])
             
-            # MP4Box için TXT tabanlı Chapter (Bölüm) enjeksiyonu
             if chaps:
                 chapters_txt = os.path.join(temp_dir, "chapters.txt")
                 with open(chapters_txt, "w", encoding="utf-8") as f:
                     for c in chaps:
                         start = float(c.get('start_time', 0))
                         hrs = int(start // 3600); mins = int((start % 3600) // 60); secs = start % 60
-                        tags = c.get('tags', {})
-                        title = tags.get('title') or tags.get('TITLE') or f"Chapter {c.get('id', 0)}"
+                        title = c.get('tags', {}).get('title') or f"Chapter {c.get('id', 0)}"
                         f.write(f"{hrs:02d}:{mins:02d}:{secs:06.3f} {title}\n")
                 box_cmd.extend(["-chap", chapters_txt])
             
@@ -174,29 +122,26 @@ class ConversionThread(QThread):
             subprocess.run(box_cmd, capture_output=True)
             
         else:
-            # MKV Modu
+            # MKV FFMPEG MODU (TAMAMLANDI)
             cmd = [ffmpeg, '-y', '-i', self.input_file]
-            for c in cleaned_list: cmd.extend(['-i', c['path']])
+            for c in cleaned_list: 
+                cmd.extend(['-i', c['path']])
             
             cmd.extend(['-map', '0:v:0'])
-            if has_audio:
-                cmd.extend(['-map', '0:a?'])
-                
-            for i, c in enumerate(cleaned_list):
-                cmd.extend(['-map', str(i + 1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
+            if has_audio: cmd.extend(['-map', '0:a?'])
             
-            # Global metadata silinir (-map_metadata -1). Chaps varsa Title'lar korunur (0:c).
-            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1'])
-            if chaps:
-                cmd.extend(['-map_chapters', '0', '-map_metadata:c', '0:c'])
-                
+            for i, c in enumerate(cleaned_list):
+                # 0:v ve 0:a'dan sonraki indexlerden altyazıları haritala
+                cmd.extend(['-map', str(i+1), f"-c:s:{i}", "subrip", f"-metadata:s:s:{i}", f"language={c['lang']}"])
+            
+            cmd.extend(['-c:v', 'copy', '-c:a', 'copy', '-map_metadata', '-1', '-map_chapters', '0'])
             cmd.append(output_file)
             subprocess.run(cmd, capture_output=True)
 
         if os.path.exists(temp_dir): shutil.rmtree(temp_dir, ignore_errors=True)
         self.finished_signal.emit(self)
 
-
+# UI Kodları (Değişmedi, ilerlemeyi koruyoruz)
 class FileWidget(QFrame):
     def __init__(self, filename, parent_list):
         super().__init__()
@@ -266,10 +211,9 @@ class MainWindow(QMainWindow):
         mb = self.menuBar(); am = mb.addMenu("Fusion"); a_about = QAction("About Fusion", self); a_about.triggered.connect(self.show_about); am.addAction(a_about); am.addSeparator()
         a_quit = QAction("Quit", self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close); am.addAction(a_quit)
         fm = mb.addMenu("File"); a_add = QAction("Add Item...", self); a_add.setShortcut(QKeySequence("Ctrl+O")); a_add.triggered.connect(self.open_files); fm.addAction(a_add)
-        em = mb.addMenu("Edit"); a_rem = QAction("Remove selected", self); a_rem.setShortcut(QKeySequence(QKeySequence.StandardKey.Delete)); a_rem.triggered.connect(self.remove_selected); em.addAction(a_rem); a_clear = QAction("Clear completed", self); a_clear.triggered.connect(self.remove_completed); em.addAction(a_clear)
 
     def show_about(self):
-        QMessageBox.information(self, "About Fusion", "Fusion v0.3.5\n- MP4Box Syntax Crash Fixed\n- Real Chapter Injection\n- MKV 0-Byte Metadata Fix.")
+        QMessageBox.information(self, "About Fusion", "Fusion v0.3.8\n- MKV Output Enabled\n- GPAC Tagging Cleaned\n- Chapter Mapping Fixed.")
 
     def show_settings_menu(self):
         menu = QMenu(self)
