@@ -1,5 +1,5 @@
-name: Build Fusion Mac
-on: [push]
+name: Build Fusion Mac (Universal)
+on: [push, workflow_dispatch]
 
 jobs:
   build:
@@ -15,47 +15,50 @@ jobs:
       - name: Install dependencies
         run: pip install PyQt6 pyinstaller
 
-      - name: Download Multimedia Tools
+      - name: Download Universal Multimedia Tools from Fusion-Box
         run: |
-          # FFmpeg & FFprobe
-          curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffmpeg.zip -o ffmpeg.zip
-          unzip -o ffmpeg.zip
-          curl -L https://ffmpeg.martin-riedl.de/download/macos/arm64/1766430132_8.0.1/ffprobe.zip -o ffprobe.zip
-          unzip -o ffprobe.zip
+          # Fusion-Box release sayfasından senin ürettiğin Universal dosyaları çekiyoruz
+          mkdir -p tools
+          curl -L https://github.com/neptune84x/Fusion-Box/releases/download/latest/ffmpeg -o tools/ffmpeg
+          curl -L https://github.com/neptune84x/Fusion-Box/releases/download/latest/ffprobe -o tools/ffprobe
+          curl -L https://github.com/neptune84x/Fusion-Box/releases/download/latest/mp4box -o tools/mp4box
           
-          # MP4Box (GPAC) - Apple uyumluluğu için brew üzerinden statik çekiyoruz
-          brew install gpac
-          cp $(which mp4box) .
+          # Çalıştırma izinlerini veriyoruz
+          chmod +x tools/ffmpeg tools/ffprobe tools/mp4box
           
-          chmod +x ffmpeg ffprobe mp4box
+          # Mimarileri doğrula (Loglarda görmek için)
+          file tools/ffmpeg
+          file tools/mp4box
 
-      - name: Create ICNS
+      - name: Create ICNS Icon
         run: |
-          mkdir Fusion.iconset
-          sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
-          sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
-          sips -z 256 256 Fusion.png --out Fusion.iconset/icon_256x256.png
-          iconutil -c icns Fusion.iconset
+          mkdir -p Fusion.iconset
+          # Eğer Fusion.png dosyan varsa icon setini oluşturur
+          if [ -f "Fusion.png" ]; then
+            sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
+            sips -z 512 512 Fusion.png --out Fusion.iconset/icon_512x512.png
+            iconutil -c icns Fusion.iconset
+          fi
 
-      - name: Build with PyInstaller
+      - name: Build App with PyInstaller
         run: |
-          rm -rf build dist
+          # PyInstaller ile Universal araçları uygulamanın içine gömüyoruz
           python -m PyInstaller --noconfirm --onedir --windowed \
             --contents-directory "internal" \
-            --add-binary "ffmpeg:internal" \
-            --add-binary "ffprobe:internal" \
-            --add-binary "mp4box:internal" \
+            --add-binary "tools/ffmpeg:internal" \
+            --add-binary "tools/ffprobe:internal" \
+            --add-binary "tools/mp4box:internal" \
             --icon "Fusion.icns" \
             --name "Fusion" \
             main.py
 
-      - name: Compress
+      - name: Create DMG (Optional but better for Mac)
         run: |
           cd dist
-          zip -y -r ../Fusion_Mac.zip Fusion.app
+          zip -y -r ../Fusion_v0.2.0_Universal.zip Fusion.app
 
-      - name: Artifact
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-App
-          path: Fusion_Mac.zip
+          name: Fusion-App-Universal
+          path: Fusion_v0.2.0_Universal.zip
