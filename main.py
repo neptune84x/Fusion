@@ -238,45 +238,71 @@ class ConversionThread(QThread):
                 box.extend(["-chap", chap_f])
             box.extend(["-ipod", out_file])
             subprocess.run(box, capture_output=True)
-# ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
+
+        # ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
         else:
-            # ÖNCELİK 1: Chapter ve metadata bilgisini kaynaktan ffmetadata formatında fiziksel olarak çıkar
+            # 1. ADIM: Bölüm (Chapter) İsimlerini ve Global Metadatayı Fiziksel Dosyaya Çıkar
             meta_f = os.path.join(tmp, "meta.txt")
+            # ffmetadata formatı chapter isimlerini ve sürelerini tam olarak korur
             self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', meta_f)
 
-            # ÖNCELİK 2: Convert SRT kapalıysa ve ASS varsa, kaynak fontları (attachment) fiziksel olarak çıkar
-            fonts_to_attach = []
+            # 2. ADIM: Fontları (Attachments) Fiziksel Olarak Çıkart
+            font_list = []
             if has_ass and not convert_srt:
-                font_dir = os.path.join(tmp, "fonts")
-                os.makedirs(font_dir, exist_ok=True)
-                
                 for s in streams:
                     if s.get('codec_type') == 'attachment':
                         tags = s.get('tags', {})
-                        filename = tags.get('filename')
-                        if not filename:
-                            filename = f"font_{s['index']}.ttf"
+                        fname = tags.get('filename') or f"font_{s['index']}.ttf"
+                        mtype = tags.get('mimetype', 'application/x-truetype-font')
+                        fpath = os.path.join(tmp, fname)
                         
-                        ext_path = os.path.join(font_dir, filename)
+                        # Fontu kaynaktan fiziksel dosyaya dök
+                        self.run_ff(ffmpeg, '-y', '-dump_attachment:t', str(s['index']), '-i', self.input_file, fpath)
                         
-                        # Fontu fiziksel olarak geçici klasöre çıkart
-                        self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{s['index']}", '-c', 'copy', ext_path)
-                        
-                        if os.path.exists(ext_path) and os.path.getsize(ext_path) > 0:
-                            mimetype = tags.get('mimetype', 'application/x-truetype-font')
-                            fonts_to_attach.append({'path': ext_path, 'filename': filename, 'mimetype': mimetype})
+                        if os.path.exists(fpath):
+                            font_list.append({'path': fpath, 'mimetype': mtype, 'filename': fname})
 
-            # AŞAMA 1: Video + Ses + Altyazılar → geçici MKV
+            # 3. ADIM (AŞAMA 1): Video + Ses + Temizlenmiş Altyazılar -> Geçici MKV
             tmp_mkv = os.path.join(tmp, "stage1.mkv")
-
             cmd1 = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned: cmd1.extend(['-i', c['path']])
 
             cmd1.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned):
                 cmd1.extend(['-map', f'{i+1}:0'])
-                if c['codec'] == 'ass':
-                    cmd1.extend([f'-c:s:{i}', 'copy'])
+                # ASS ise direkt kopyala (fontlar sonra eklenecek), SRT ise subrip'e çevir
+                codec = 'copy' if c['codec'] == 'ass' else 'subrip'
+                cmd1.extend([f'-c:s:{i}', codec])
+                # Dil etiketlerini (Dillerin kaybolmaması için kritik) burada yazıyoruz
+                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
+
+            cmd1.extend(['-c:v', 'copy', '-c:a', 'copy'])
+            # Stage 1'de metadata ve chapterları temizle (Stage 2'de temiz kaynaktan eklenecek)
+            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1'])
+            cmd1.append(tmp_mkv)
+            subprocess.run(cmd1, capture_output=True)
+
+            # 4. ADIM (AŞAMA 2): Geçici MKV + Chapter Dosyası + Fontlar -> Final Çıktı
+            # Girdi 0: Temiz video/ses/altyazı | Girdi 1: Metadata/Chapter dosyası
+            cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
+            
+            # Stage 1'den gelen her şeyi al (V/A/Sub)
+            cmd2.extend(['-map', '0'])
+            
+            # Metadata dosyasından global etiketleri ve chapter isimlerini aktar
+            cmd2.extend(['-map_metadata', '1'])
+            cmd2.extend(['-map_chapters', '1'])
+            
+            # Fiziksel olarak çıkardığımız fontları yeni dosyaya ekle
+            for idx, f in enumerate(font_list):
+                cmd2.extend(['-attach', f['path']])
+                # Fontun mimetype ve filename bilgilerini koru
+                cmd2.extend([f'-metadata:s:t:{idx}', f'mimetype={f["mimetype"]}'])
+                cmd2.extend([f'-metadata:s:t:{idx}', f'filename={f["filename"]}'])
+
+            cmd2.extend(['-c', 'copy', out_file])
+            subprocess.run(cmd2, capture_output=True)
+            
                 else:
                     cmd1.extend([f'-c:s:{i}', 'subrip'])
                 cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
@@ -286,26 +312,6 @@ class ConversionThread(QThread):
             cmd1.extend(['-map_metadata', '-1'])
             cmd1.append(tmp_mkv)
             subprocess.run(cmd1, capture_output=True)
-
-            # AŞAMA 2: Geçici MKV + Çıkarılan Chapter dosyası + Çıkarılan Fontlar → final MKV
-            cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
-            
-            # Aşama 1'deki Video, Ses ve Altyazıları al
-            cmd2.extend(['-map', '0'])
-            
-            # Çıkarılan dosyadan metadata ve chapterları eşle
-            cmd2.extend(['-map_metadata', '1'])
-            cmd2.extend(['-map_chapters', '1'])
-            
-            # Çıkarılan fontları teker teker attach (iliştir) et ve mimetypelarını belirle
-            for t_idx, f_info in enumerate(fonts_to_attach):
-                cmd2.extend(['-attach', f_info['path']])
-                cmd2.extend([f"-metadata:s:t:{t_idx}", f"mimetype={f_info['mimetype']}"])
-                cmd2.extend([f"-metadata:s:t:{t_idx}", f"filename={f_info['filename']}"])
-
-            cmd2.extend(['-c', 'copy'])
-            cmd2.append(out_file)
-            subprocess.run(cmd2, capture_output=True)
 
             # ── Chapter metadata dosyası ──────────────────────
             meta_f = os.path.join(tmp, "meta.txt")
