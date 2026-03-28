@@ -234,50 +234,83 @@ class ConversionThread(QThread):
 
         # ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
         else:
-            # 1. Chapter ve Global Metadata Çıkar (Kaynaktan temiz dosya olarak)
-            meta_f = os.path.join(tmp, "meta.txt")
-            self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', meta_f)
-
-            # 2. Fontları (Attachment) Fiziksel Olarak Dışarı Aktar
+            # ── Fontları kaynak MKV'den fiziksel olarak çıkar ──
+            # Doğru kullanım: -dump_attachment:t "" bir INPUT seçeneğidir.
+            # Syntax: ffmpeg -dump_attachment:t "" -i INPUT -t 0 -f null null
+            # Bu komut tüm attachment'ları filename tag'ine göre tmp dizinine yazar.
             font_list = []
             if has_ass and not convert_srt:
-                for s in streams:
-                    if s.get('codec_type') == 'attachment':
-                        tags = s.get('tags', {})
-                        fname = tags.get('filename') or f"font_{s['index']}.ttf"
-                        mtype = tags.get('mimetype', 'application/x-truetype-font')
-                        fpath = os.path.join(tmp, fname)
-                        self.run_ff(ffmpeg, '-y', '-dump_attachment:t', str(s['index']), '-i', self.input_file, fpath)
-                        if os.path.exists(fpath):
-                            font_list.append({'path': fpath, 'mimetype': mtype, 'filename': fname})
+                att_streams = [s for s in streams if s.get('codec_type') == 'attachment']
+                if att_streams:
+                    font_dir = os.path.join(tmp, "fonts")
+                    os.makedirs(font_dir, exist_ok=True)
+                    # -dump_attachment:t "" → tüm attachment'ları filename tag'e göre çıkar
+                    # Bu input seçeneği, -i'dan ÖNCE gelmelidir
+                    dump_cmd = [
+                        ffmpeg,
+                        '-dump_attachment:t', '',   # boş string = filename tag'i kullan
+                        '-i', self.input_file,
+                        '-t', '0',                  # hiç video/audio işleme
+                        '-f', 'null', '-'           # çıktıyı at
+                    ]
+                    # Çalışma dizinini font_dir olarak ayarla,
+                    # böylece dosyalar oraya yazılır
+                    subprocess.run(dump_cmd, capture_output=True, cwd=font_dir)
 
-            # AŞAMA 1: Video + Ses + Temiz Altyazılar -> Geçici MKV (Diller burada atanır)
+                    # Çıkarılan fontları listele ve metadata eşle
+                    for s in att_streams:
+                        tags  = s.get('tags', {})
+                        fname = tags.get('filename', '')
+                        mtype = tags.get('mimetype', 'application/x-truetype-font')
+                        if not fname:
+                            continue
+                        fpath = os.path.join(font_dir, fname)
+                        if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
+                            font_list.append({
+                                'path':     fpath,
+                                'filename': fname,
+                                'mimetype': mtype,
+                            })
+
+            # ── AŞAMA 1: Video + Ses + Altyazılar → geçici MKV ──
+            # (chapter ve font YOK; dil kodları burada atanır)
             tmp_mkv = os.path.join(tmp, "stage1.mkv")
             cmd1 = [ffmpeg, '-y', '-i', self.input_file]
-            for c in cleaned: cmd1.extend(['-i', c['path']])
+            for c in cleaned:
+                cmd1.extend(['-i', c['path']])
 
             cmd1.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned):
                 cmd1.extend(['-map', f'{i+1}:0'])
                 codec = 'copy' if c['codec'] == 'ass' else 'subrip'
                 cmd1.extend([f'-c:s:{i}', codec])
-                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"]) # Diller burada korunuyor
+                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
 
             cmd1.extend(['-c:v', 'copy', '-c:a', 'copy'])
-            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1']) # Globali temizle
+            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1'])
             cmd1.append(tmp_mkv)
             subprocess.run(cmd1, capture_output=True)
 
-            # AŞAMA 2: Geçici MKV + Meta Dosyası + Fontlar -> Final MKV
-            cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
-            cmd2.extend(['-map', '0', '-c', 'copy']) # Stage 1'deki streamleri ve dillerini al
-            cmd2.extend(['-map_metadata', '1'])      # Meta dosyasından global etiketleri al
-            cmd2.extend(['-map_chapters', '1'])      # Meta dosyasından chapter isimlerini al
-            
-            for idx, f in enumerate(font_list):
-                cmd2.extend(['-attach', f['path']])
-                cmd2.extend([f'-metadata:s:t:{idx}', f'mimetype={f["mimetype"]}'])
-                cmd2.extend([f'-metadata:s:t:{idx}', f'filename={f["filename"]}'])
+            # ── AŞAMA 2: geçici MKV + chapter + fontlar → final MKV ──
+            # Girdi 0 = stage1.mkv  (A/V/Sub + dil kodları)
+            # Girdi 1 = kaynak      (chapter bilgisi için)
+            cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', self.input_file]
+
+            # stage1'deki tüm stream'leri al (dil kodları korunur)
+            cmd2.extend(['-map', '0'])
+            # Codec: hepsini kopyala
+            cmd2.extend(['-c', 'copy'])
+            # Global metadata temizle, chapter'ları kaynaktan al
+            cmd2.extend(['-map_metadata', '-1'])
+            cmd2.extend(['-map_chapters', '1'])   # input 1 = kaynak = chapter sahibi
+
+            # Fontları tek tek -attach ile ekle
+            # -attach bir OUTPUT seçeneğidir, doğru yerde kullanılıyor
+            # Attachment stream sayısı = map 0'daki stream sayısı sonrası başlar
+            for idx, font in enumerate(font_list):
+                cmd2.extend(['-attach', font['path']])
+                cmd2.extend([f'-metadata:s:t:{idx}', f"mimetype={font['mimetype']}"])
+                cmd2.extend([f'-metadata:s:t:{idx}', f"filename={font['filename']}"])
 
             cmd2.append(out_file)
             subprocess.run(cmd2, capture_output=True)
