@@ -12,7 +12,8 @@
 
 ### Application Interface
 <p align="center">
-  <img src="Screen/Main1.png" width="100%" alt="Add Items" />
+  <img src="Screen/Main1.png" width="80%" alt="Add Items" />
+    <img src="Screen/Main2.png" width="80%" alt="Add Items" />
 </p>
 
 
