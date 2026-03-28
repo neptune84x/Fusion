@@ -20,13 +20,6 @@
   <img src="Screen/redd.png" width="45%" alt="Task Completed" />
 </p>
 
-### Metadata & Subtitle Optimization (Before vs. After)
-<p align="center">
-  <img src="Screen/1.png" width="30%" alt="Original File" />
-  <img src="Screen/2.png" width="30%" alt="Processing" />
-  <img src="Screen/3.png" width="30%" alt="Clean Output" />
-</p>
-
 ---
 
 ## 🎯 Who is Fusion For?
