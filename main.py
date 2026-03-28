@@ -13,7 +13,7 @@ try:
     from PyQt6.QtCore  import (Qt, QThread, pyqtSignal, QRect, QPoint,
                                QSize, QSettings, QRectF, QPointF, QEvent)
     from PyQt6.QtGui   import (QPainter, QColor, QBrush, QPen, QAction,
-                               QKeySequence, QFont, QPainterPath, QPolygonF)
+                               QKeySequence, QFont, QPainterPath)
 except ImportError:
     sys.exit(1)
 
@@ -145,7 +145,7 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger",
                  "fr":"fra","es":"spa","it":"ita","pt":"por","ar":"ara"}
 
-        cleaned = []   # {'path', 'lang', 'codec': 'srt'|'ass'|'vtt'}
+        cleaned = []  # {'path', 'lang', 'codec': srt|ass|vtt}
 
         # ── İç altyazılar ─────────────────────────────────────
         for i, sub in enumerate(int_subs):
@@ -157,15 +157,13 @@ class ConversionThread(QThread):
                                 '-map', f"0:{sub['index']}", '-f', 'srt', p],
                                capture_output=True)
                 if os.path.exists(p) and os.path.getsize(p) > 0:
-                    vp = p.replace('.srt', '.vtt')
-                    self.to_vtt(p, vp)
+                    vp = p.replace('.srt', '.vtt'); self.to_vtt(p, vp)
                     cleaned.append({'path': vp, 'lang': l_map.get(lang, lang), 'codec': 'vtt'})
             else:
                 if not convert_srt and codec in ('ass', 'ssa'):
                     p = os.path.join(tmp, f"int_{i}.ass")
                     subprocess.run([ffmpeg, '-y', '-i', self.input_file,
-                                    '-map', f"0:{sub['index']}", p],
-                                   capture_output=True)
+                                    '-map', f"0:{sub['index']}", p], capture_output=True)
                     if os.path.exists(p) and os.path.getsize(p) > 0:
                         cleaned.append({'path': p, 'lang': l_map.get(lang, lang), 'codec': 'ass'})
                 else:
@@ -182,15 +180,14 @@ class ConversionThread(QThread):
                 if not fp.lower().endswith(('.srt', '.ass')): continue
                 if fp == self.input_file: continue
                 is_ass = fp.lower().endswith('.ass')
-                m      = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', fp.lower())
-                lang   = m.group(1) if m else "und"
+                m = re.search(r'\.([a-z]{2,3})\.(?:srt|ass)$', fp.lower())
+                lang = m.group(1) if m else "und"
                 if fmt == "mp4":
                     p = os.path.join(tmp, f"ext_{len(cleaned)}.srt")
                     if is_ass: self.ass_to_srt(fp, p)
-                    else:      shutil.copy2(fp, p)
+                    else: shutil.copy2(fp, p)
                     if os.path.exists(p) and os.path.getsize(p) > 0:
-                        vp = p.replace('.srt', '.vtt')
-                        self.to_vtt(p, vp)
+                        vp = p.replace('.srt', '.vtt'); self.to_vtt(p, vp)
                         cleaned.append({'path': vp, 'lang': l_map.get(lang, lang), 'codec': 'vtt'})
                 else:
                     if is_ass and not convert_srt:
@@ -200,7 +197,7 @@ class ConversionThread(QThread):
                     else:
                         p = os.path.join(tmp, f"ext_{len(cleaned)}.srt")
                         if is_ass: self.ass_to_srt(fp, p)
-                        else:      shutil.copy2(fp, p)
+                        else: shutil.copy2(fp, p)
                         if os.path.exists(p) and os.path.getsize(p) > 0:
                             cleaned.append({'path': p, 'lang': l_map.get(lang, lang), 'codec': 'srt'})
 
@@ -237,20 +234,26 @@ class ConversionThread(QThread):
 
         # ── MKV modu ──────────────────────────────────────────
         else:
-            # ── Strateji ──────────────────────────────────────
-            # 1. Chapter isimleri: ffprobe'dan okunan chaps listesi
-            #    ffmetadata dosyasına yazılır, -map_metadata ile gömülür.
-            #    ÖNEMLI: -map_metadata için girdi index'i doğru hesaplanmalı.
-            #    Girdi sırası: 0=kaynak video, 1..N=altyazı dosyaları, N+1=metadata
+            # ── Chapter metadata dosyası ──────────────────────
+            # Araştırma bulgusu:
+            #   -map_metadata N   → N. girdinin genel (global) metadata'sını kopyalar
+            #   -map_chapters  N  → N. girdinin chapter bilgilerini kopyalar
+            #   İkisi AYRI komutlar — sadece -map_metadata yetmez, chapters gelmez.
             #
-            # 2. Attachment fontlar:
-            #    - convert_srt=False (ASS korunuyor) → 0:t? ile tüm fontlar kopyalanır
-            #    - convert_srt=True  → fontlar temizlenir (SRT'nin fonta ihtiyacı yok)
+            # Doğru strateji:
+            #   Girdi 0          = kaynak video
+            #   Girdi 1..N       = altyazı dosyaları
+            #   Girdi N+1        = ffmetadata dosyası (chapters içerir)
+            #
+            #   -map_metadata -1          → kaynak global metadata temizle
+            #   -map_chapters  N+1        → ffmetadata dosyasından chapters al
+            #
+            # NOT: -map_metadata N+1 EKLEMIYORUZ çünkü global metadata istemiyoruz,
+            #      sadece chapter bilgisini istiyoruz.
 
-            n_subs = len(cleaned)
-            meta_idx = n_subs + 1   # metadata dosyasının ffmpeg girdi numarası
+            n_subs   = len(cleaned)
+            meta_idx = n_subs + 1   # ffmetadata dosyasının girdi index'i
 
-            # Metadata dosyası: SADECE chapter bilgileri, başka hiçbir şey yok
             meta_f = os.path.join(tmp, "meta.txt")
             with open(meta_f, "w", encoding="utf-8") as ff:
                 ff.write(";FFMETADATA1\n")
@@ -264,20 +267,24 @@ class ConversionThread(QThread):
                     ff.write(f"END={end_ms}\n")
                     ff.write(f"title={title}\n")
 
-            # ffmpeg komutunu oluştur
-            cmd = [ffmpeg, '-y', '-i', self.input_file]
+            # ffmpeg komutu
+            cmd = [ffmpeg, '-y']
 
-            # Altyazı girdileri
+            # Girdi 0: kaynak video
+            cmd.extend(['-i', self.input_file])
+
+            # Girdi 1..N: altyazı dosyaları
             for c in cleaned:
                 cmd.extend(['-i', c['path']])
 
-            # Metadata girdisi
+            # Girdi N+1: metadata dosyası
             cmd.extend(['-i', meta_f])
 
-            # Stream mapping
-            cmd.extend(['-map', '0:v:0'])    # video
-            cmd.extend(['-map', '0:a?'])     # tüm ses
+            # Video + Audio map
+            cmd.extend(['-map', '0:v:0'])
+            cmd.extend(['-map', '0:a?'])
 
+            # Altyazı map + codec + dil
             for i, c in enumerate(cleaned):
                 cmd.extend(['-map', f'{i+1}:0'])
                 if c['codec'] == 'ass':
@@ -286,20 +293,20 @@ class ConversionThread(QThread):
                     cmd.extend([f'-c:s:{i}', 'subrip'])
                 cmd.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
 
-            # Attachment fontlar: SADECE convert_srt=False ise (ASS korunuyorsa)
+            # Attachment fontlar:
+            # SADECE convert_srt=False iken (ASS korunuyorsa) kaynak fontları koru.
+            # convert_srt=True ise (SRT'ye dönüştürüldüyse) fontlara gerek yok.
             if has_ass and not convert_srt:
                 cmd.extend(['-map', '0:t?'])
 
-            # Codec
+            # Codec: video + audio kopyala
             cmd.extend(['-c:v', 'copy', '-c:a', 'copy'])
 
-            # Metadata: kaynak metadata'yı sil, chapter metadata'sını yaz
-            # -map_metadata -1  → tüm kaynak metadata'yı temizle
-            # -map_metadata N   → meta_f girdisindeki chapter bilgilerini uygula
-            cmd.extend([
-                '-map_metadata', '-1',
-                '-map_metadata', str(meta_idx),
-            ])
+            # Metadata stratejisi:
+            #   1. Global metadata temizle (-map_metadata -1)
+            #   2. Chapters'ı ffmetadata dosyasından al (-map_chapters meta_idx)
+            cmd.extend(['-map_metadata', '-1'])
+            cmd.extend(['-map_chapters', str(meta_idx)])
 
             cmd.append(out_file)
             subprocess.run(cmd, capture_output=True)
@@ -309,23 +316,21 @@ class ConversionThread(QThread):
 
 
 # ═══════════════════════════════════════════════════════════════
-# TOOLBAR BUTON — Subler ikonlarına birebir
+# TOOLBAR BUTON
+# Subler referans görselindeki ikonlar:
+#   play     : dolu üçgen, gri daire arka plan
+#   gear     : 8 dişli çark, gri daire arka plan
+#   tray_down: belge + sağ alt artı badge, gri daire arka plan
+# Daire merkezi ikonun tam ortasında, kesilme YOK
 # ═══════════════════════════════════════════════════════════════
 class IconButton(QPushButton):
-    """
-    Üç ikon — Subler'daki görsel referansa göre:
-      play     : dolu üçgen içinde yuvarlak arka plan
-      gear     : dişli çark, 8 diş, ince çizgili
-      tray_down: belge + sağ alt köşede artı işareti (Subler Add Item ikonu)
-    
-    Her buton: 68×58 piksel, yuvarlak gri arka plan, ikon ortada, etiket altta
-    """
     def __init__(self, icon_type, label, parent=None):
         super().__init__(parent)
         self._type  = icon_type
         self._label = label
         self._hover = self._press = False
-        self.setFixedSize(68, 58)
+        # Yeterince yüksek — daire + etiket birlikte sığar
+        self.setFixedSize(72, 62)
         self.setFlat(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
 
@@ -341,138 +346,125 @@ class IconButton(QPushButton):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
 
-        # ── Yuvarlak arka plan (Subler'daki gri daire) ────────
-        # Normal: açık gri  /  hover: biraz koyu  /  press: daha koyu
-        bg_alpha = 0
-        if self._press:   bg_alpha = 40
-        elif self._hover: bg_alpha = 20
+        # Etiket alanı: alt 16px
+        # Daire alanı: kalan üst kısım
+        lbl_h   = 16
+        icon_h  = H - lbl_h   # ikon bölgesi yüksekliği
+        circle_r = 21.0
+        cx = W / 2.0
+        # Dairenin merkezi: ikon bölgesinin tam ortası
+        # Dairenin tamamı görünmeli: cy - r >= 2  →  cy >= r + 2
+        cy = max(circle_r + 3, icon_h / 2.0)
 
-        circle_r = 22
-        circle_cx = W / 2
-        circle_cy = 19  # etiketin üstünde, ikon merkezinde
+        # ── Gri daire (her zaman görünür) ────────────────────
+        base_alpha = 22
+        if self._press:   extra = 30
+        elif self._hover: extra = 15
+        else:             extra = 0
 
-        p.setBrush(QBrush(QColor(0, 0, 0, bg_alpha + 18)))  # her zaman görünen gri çember
+        p.setBrush(QBrush(QColor(0, 0, 0, base_alpha + extra)))
         p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QPointF(circle_cx, circle_cy), circle_r, circle_r)
-
-        # Hover/press için ek koyuluk
-        if bg_alpha > 0:
-            p.setBrush(QBrush(QColor(0, 0, 0, bg_alpha)))
-            p.drawEllipse(QPointF(circle_cx, circle_cy), circle_r, circle_r)
+        p.drawEllipse(QPointF(cx, cy), circle_r, circle_r)
 
         ink = QColor(TXT_PRIMARY)
-        cx  = W / 2.0
-        cy  = float(circle_cy)  # ikon dikey merkezi = daire merkezi
 
-        # ══ PLAY ▶ ══════════════════════════════════════════
+        # ══ PLAY ▶ ═══════════════════════════════════════════
         if self._type == "play":
             p.setBrush(QBrush(ink)); p.setPen(Qt.PenStyle.NoPen)
-            hs = 9.0   # üçgen yarı-yüksekliği
-            # Optik denge: hafif sağa kaydır
+            hs = 8.5
             path = QPainterPath()
-            path.moveTo(cx - 6 + 1.5, cy - hs)
-            path.lineTo(cx - 6 + 1.5, cy + hs)
-            path.lineTo(cx + 8,        cy)
+            path.moveTo(cx - 5.5 + 1.5, cy - hs)
+            path.lineTo(cx - 5.5 + 1.5, cy + hs)
+            path.lineTo(cx + 7.5,        cy)
             path.closeSubpath()
             p.drawPath(path)
 
-        # ══ GEAR ⚙ ══════════════════════════════════════════
+        # ══ GEAR ⚙ ═══════════════════════════════════════════
         elif self._type == "gear":
-            # Subler dişlisi: ince kontur, 8 diş, merkez delik
-            p.save()
-            p.translate(cx, cy)
-
-            R_out  = 9.5    # dış diş ucu
-            R_body = 7.2    # diş kökü / gövde dışı
-            R_hole = 3.8    # merkez delik
+            p.save(); p.translate(cx, cy)
+            p.setBrush(QBrush(ink)); p.setPen(Qt.PenStyle.NoPen)
+            R_out  = 9.0
+            R_body = 6.8
+            R_hole = 3.5
             teeth  = 8
             tw     = math.radians(11)
             step   = math.radians(360 / teeth)
-
-            outer = QPainterPath()
-            first = True
+            outer  = QPainterPath(); first = True
             for i in range(teeth):
                 base = math.radians(i * 360 / teeth) - math.pi / 2
-                a1 = base - tw / 2;  a2 = base + tw / 2
+                a1 = base - tw/2;  a2 = base + tw/2
                 b1 = base - step/2 + tw/2;  b2 = base + step/2 - tw/2
-                for angle, r in [(b1, R_body), (a1, R_out),
-                                 (a2, R_out),  (b2, R_body)]:
-                    pt = QPointF(r * math.cos(angle), r * math.sin(angle))
+                for ang, r in [(b1, R_body), (a1, R_out), (a2, R_out), (b2, R_body)]:
+                    pt = QPointF(r * math.cos(ang), r * math.sin(ang))
                     if first: outer.moveTo(pt); first = False
-                    else:     outer.lineTo(pt)
+                    else: outer.lineTo(pt)
             outer.closeSubpath()
-
             hole = QPainterPath()
             hole.addEllipse(QPointF(0, 0), R_hole, R_hole)
-
-            p.setBrush(QBrush(ink)); p.setPen(Qt.PenStyle.NoPen)
             p.drawPath(outer.subtracted(hole))
             p.restore()
 
         # ══ BELGE + ARTI (Add Item) ══════════════════════════
-        # Subler'daki Add Item ikonu: beyaz belge + sağ alt köşede
-        # içi dolu daire içinde + işareti
         elif self._type == "tray_down":
-            stroke = 1.6
+            stroke = 1.5
             pen = QPen(ink, stroke, Qt.PenStyle.SolidLine,
                        Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-            p.setPen(pen)
-            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
 
-            # Belge gövdesi: köşesi kırık dikdörtgen
-            dw = 14.0; dh = 16.0
-            dx = cx - dw / 2; dy = cy - dh / 2 - 1
-            corner = 3.5  # kırık köşe boyutu
+            # Belge gövdesi — daire merkezine göre konumlandırılmış
+            dw = 13.0; dh = 15.0
+            dx = cx - dw/2 - 1.5
+            dy = cy - dh/2 - 1.0
+            corner = 3.2
 
             doc = QPainterPath()
             doc.moveTo(dx, dy)
-            doc.lineTo(dx + dw - corner, dy)          # üst kenar (kırık köşeye kadar)
-            doc.lineTo(dx + dw, dy + corner)           # kırık köşe çizgisi
-            doc.lineTo(dx + dw, dy + dh)               # sağ kenar
-            doc.lineTo(dx, dy + dh)                    # alt kenar
-            doc.lineTo(dx, dy)                         # sol kenar
+            doc.lineTo(dx + dw - corner, dy)
+            doc.lineTo(dx + dw, dy + corner)
+            doc.lineTo(dx + dw, dy + dh)
+            doc.lineTo(dx, dy + dh)
+            doc.lineTo(dx, dy)
             doc.closeSubpath()
             p.drawPath(doc)
 
-            # Kırık köşe iç çizgisi (L şekli)
+            # Kırık köşe
             fold = QPainterPath()
             fold.moveTo(dx + dw - corner, dy)
             fold.lineTo(dx + dw - corner, dy + corner)
             fold.lineTo(dx + dw, dy + corner)
             p.drawPath(fold)
 
-            # Sağ alt köşede içi dolu daire + artı
-            badge_cx = dx + dw + 1.5
-            badge_cy = dy + dh + 0.5
-            badge_r  = 5.5
+            # Badge: dairenin sağ alt bölgesine
+            badge_cx = dx + dw + 2.5
+            badge_cy = dy + dh + 1.0
+            badge_r  = 5.0
 
-            # Dolu daire (arka plan rengiyle aynı, kenar çizgisiyle)
+            # Badge arka plan (toolbar rengiyle aynı — daire çizgisini temizler)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(QColor(BG_TOOLBAR)))
-            p.drawEllipse(QPointF(badge_cx, badge_cy), badge_r + 0.5, badge_r + 0.5)
+            p.drawEllipse(QPointF(badge_cx, badge_cy), badge_r + 1.0, badge_r + 1.0)
 
+            # Dolu siyah daire
             p.setBrush(QBrush(ink))
             p.drawEllipse(QPointF(badge_cx, badge_cy), badge_r, badge_r)
 
-            # + işareti (beyaz)
-            plus_pen = QPen(QColor(BG_TOOLBAR), 1.5, Qt.PenStyle.SolidLine,
+            # Beyaz + işareti
+            plus_pen = QPen(QColor(BG_TOOLBAR), 1.4, Qt.PenStyle.SolidLine,
                             Qt.PenCapStyle.RoundCap)
-            p.setPen(plus_pen)
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            pl = 3.0
+            p.setPen(plus_pen); p.setBrush(Qt.BrushStyle.NoBrush)
+            pl = 2.8
             p.drawLine(QPointF(badge_cx - pl, badge_cy),
                        QPointF(badge_cx + pl, badge_cy))
             p.drawLine(QPointF(badge_cx, badge_cy - pl),
                        QPointF(badge_cx, badge_cy + pl))
 
         # ── Etiket ────────────────────────────────────────────
-        p.setPen(QPen(ink))
-        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(ink)); p.setBrush(Qt.BrushStyle.NoBrush)
         f = QFont()
         if sys.platform == "darwin": f.setFamily(".AppleSystemUIFont")
-        f.setPointSize(10)
-        p.setFont(f)
-        p.drawText(QRect(0, H - 17, W, 15),
+        f.setPointSize(10); p.setFont(f)
+        # Etiket: en altta, dairenin altında
+        p.drawText(QRect(0, H - lbl_h, W, lbl_h),
                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
                    self._label)
 
@@ -565,6 +557,8 @@ class QueueList(QWidget):
         self.files_dropped.emit([u.toLocalFile() for u in e.mimeData().urls()])
 
     def _ctx_menu(self, pos):
+        # Menüyü NATIVE olarak çalıştır — macOS native renderer
+        # seçili öğe üzerinde renk sorununu otomatik çözer
         m = QMenu(self)
         a_rem = QAction("Remove Selected", self)
         a_rem.setEnabled(any(it.is_selected for it in self.items))
@@ -573,7 +567,8 @@ class QueueList(QWidget):
         a_clr.setEnabled(any(it.status == "done" for it in self.items))
         a_clr.triggered.connect(self.main_win.remove_completed)
         m.addAction(a_rem); m.addAction(a_clr)
-        m.exec(self.mapToGlobal(pos))
+        # exec yerine popup kullan — seçili widget üzerinde kaymaz
+        m.popup(self.mapToGlobal(pos))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -633,11 +628,11 @@ class SettingsPanel(QDialog):
 
     def _build(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(18, 14, 18, 16); root.setSpacing(6)
+        root.setContentsMargins(18,14,18,16); root.setSpacing(6)
         root.addWidget(self._section("Output Format:"))
         self.combo_fmt = QComboBox(); self.combo_fmt.setFont(self._font(12))
         self.combo_fmt.addItems(["mkv", "mp4"])
-        self.combo_fmt.setCurrentIndex(0 if self.prefs["output_format"] == "mkv" else 1)
+        self.combo_fmt.setCurrentIndex(0 if self.prefs["output_format"]=="mkv" else 1)
         self.combo_fmt.setMinimumWidth(160)
         self.combo_fmt.setStyleSheet("""
             QComboBox { border:1px solid #b8b8be; border-radius:5px; padding:2px 8px;
@@ -661,7 +656,7 @@ class SettingsPanel(QDialog):
     def sync(self, prefs):
         self.prefs = dict(prefs)
         self.combo_fmt.blockSignals(True)
-        self.combo_fmt.setCurrentIndex(0 if prefs["output_format"] == "mkv" else 1)
+        self.combo_fmt.setCurrentIndex(0 if prefs["output_format"]=="mkv" else 1)
         self.combo_fmt.blockSignals(False)
         self.cb_conv.setChecked(prefs["convert_srt"])
         self.cb_conv.setVisible(prefs["output_format"] == "mkv")
@@ -683,26 +678,34 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         root = QVBoxLayout(); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
-        # Toolbar
-        tb = QWidget(); tb.setFixedHeight(66)
+        # ── TOOLBAR ───────────────────────────────────────────
+        tb = QWidget()
+        # Toolbar yüksekliği: daire (44px) + etiket (16px) + üst/alt padding = 70px
+        tb.setFixedHeight(70)
         tb.setStyleSheet(f"background:{BG_TOOLBAR}; border-bottom:1px solid {BORDER_TOOLBAR};")
-        tb_hl = QHBoxLayout(tb); tb_hl.setContentsMargins(10,0,4,0); tb_hl.setSpacing(0)
-        title = QLabel("Fusion"); tf = QFont()
+        tb_hl = QHBoxLayout(tb); tb_hl.setContentsMargins(12, 0, 6, 0); tb_hl.setSpacing(0)
+
+        # "Queue" başlık — sola hizalı
+        title = QLabel("Queue"); tf = QFont()
         if sys.platform == "darwin": tf.setFamily(".AppleSystemUIFont")
         tf.setPointSize(13); tf.setBold(True); title.setFont(tf)
         title.setStyleSheet(f"color:{TXT_PRIMARY};")
+
         self.btn_start    = IconButton("play",      "Start")
         self.btn_settings = IconButton("gear",      "Settings")
         self.btn_add      = IconButton("tray_down", "Add Item")
-        tb_hl.addWidget(title); tb_hl.addStretch()
+
+        tb_hl.addWidget(title)
+        tb_hl.addStretch()
         tb_hl.addWidget(self.btn_start)
         tb_hl.addWidget(self.btn_settings)
         tb_hl.addWidget(self.btn_add)
+
         self.btn_start.clicked.connect(self.start_processing)
         self.btn_settings.clicked.connect(self._toggle_settings)
         self.btn_add.clicked.connect(self.open_files)
 
-        # Scroll + Queue
+        # ── SCROLL + KUYRUK ────────────────────────────────────
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -711,7 +714,7 @@ class MainWindow(QMainWindow):
         self._queue.files_dropped.connect(self.add_to_list)
         scroll.setWidget(self._queue)
 
-        # Footer
+        # ── FOOTER ────────────────────────────────────────────
         footer = QWidget(); footer.setFixedHeight(24)
         footer.setStyleSheet(f"background:{BG_FOOTER}; border-top:1px solid {BORDER_FOOTER};")
         f_hl = QHBoxLayout(footer); f_hl.setContentsMargins(10,0,10,0); f_hl.setSpacing(0)
@@ -757,9 +760,9 @@ class MainWindow(QMainWindow):
         if self._settings.isVisible(): self._settings.hide(); return
         self._settings.sync(self.prefs)
         btn = self.btn_settings
-        gp  = btn.mapToGlobal(QPoint(btn.width() // 2, btn.height() + 2))
+        gp  = btn.mapToGlobal(QPoint(btn.width()//2, btn.height()+2))
         sw  = max(self._settings.sizeHint().width(), 280)
-        gp.setX(gp.x() - sw // 2)
+        gp.setX(gp.x() - sw//2)
         self._settings.move(gp)
         self._settings.show(); self._settings.raise_(); self._settings.activateWindow()
 
@@ -776,8 +779,7 @@ class MainWindow(QMainWindow):
     def open_files(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Add Videos", "",
-            "Video Files (*.mkv *.mp4 *.avi *.mov *.ts *.m2ts);;All Files (*)"
-        )
+            "Video Files (*.mkv *.mp4 *.avi *.mov *.ts *.m2ts);;All Files (*)")
         if paths: self.add_to_list(paths)
 
     def add_to_list(self, paths):
@@ -798,7 +800,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_status(self):
         n = len(self._queue.items)
-        self._status_lbl.setText(f"{n} item{'s' if n != 1 else ''} in queue.")
+        self._status_lbl.setText(f"{n} item{'s' if n!=1 else ''} in queue.")
 
     def start_processing(self):
         self.active_queue = [i for i in self._queue.items if i.status == "waiting"]
@@ -814,7 +816,7 @@ class MainWindow(QMainWindow):
         t.widget.set_status("done")
         done  = sum(1 for i in self._queue.items if i.status == "done")
         total = len(self._queue.items)
-        if total: self._progress.setValue(int(done / total * 100))
+        if total: self._progress.setValue(int(done/total*100))
         self._process_next()
 
     def dragEnterEvent(self, e):
