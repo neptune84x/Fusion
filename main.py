@@ -605,7 +605,7 @@ class MainWindow(QMainWindow):
         if self._settings and self._settings.isVisible(): self._settings.hide()
         super().mousePressEvent(e)
 
-    def _about(self): QMessageBox.information(self,"About Fusion", "Fusion v0.3.1\n\nUniversal macOS video queue processor.\nMKV & MP4 · Subtitle muxing · Chapter preservation\n\nPowered by ffmpeg · ffprobe · MP4Box")
+    def _about(self): QMessageBox.information(self,"About Fusion", "Fusion v0.3.0\n\nUniversal macOS video queue processor.\nMKV & MP4 · Subtitle muxing · Chapter preservation\n\nPowered by ffmpeg · ffprobe · MP4Box")
     def open_files(self):
         paths,_=QFileDialog.getOpenFileNames(self,"Add Videos","", "Video Files (*.mkv *.mp4 *.avi *.mov *.ts *.m2ts);;All Files (*)")
         if paths: self.add_to_list(paths)
