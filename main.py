@@ -728,7 +728,7 @@ class MainWindow(QMainWindow):
 
     def _about(self):
         QMessageBox.information(self,"About Fusion",
-            "Fusion v0.2.0\n\nUniversal macOS video queue processor.\n"
+            "Fusion v0.3.0\n\nUniversal macOS video queue processor.\n"
             "MKV & MP4 · Subtitle muxing · Chapter preservation\n\n"
             "Powered by ffmpeg · ffprobe · MP4Box")
 
