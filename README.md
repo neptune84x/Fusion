@@ -12,13 +12,9 @@
 
 ### Application Interface
 <p align="center">
-  <img src="Screen/itemp.png" width="45%" alt="Add Items" />
-  <img src="Screen/work.png" width="45%" alt="Fusion in Action" />
+  <img src="Screen/Main1.png" width="100%" alt="Add Items" />
 </p>
-<p align="center">
-  <img src="Screen/ch.png" width="45%" alt="Settings and Channels" />
-  <img src="Screen/redd.png" width="45%" alt="Task Completed" />
-</p>
+
 
 ---
 
