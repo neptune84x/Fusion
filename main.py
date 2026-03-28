@@ -238,17 +238,39 @@ class ConversionThread(QThread):
                 box.extend(["-chap", chap_f])
             box.extend(["-ipod", out_file])
             subprocess.run(box, capture_output=True)
-
-        # ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
+# ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
         else:
+            # ÖNCELİK 1: Chapter ve metadata bilgisini kaynaktan ffmetadata formatında fiziksel olarak çıkar
+            meta_f = os.path.join(tmp, "meta.txt")
+            self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', meta_f)
+
+            # ÖNCELİK 2: Convert SRT kapalıysa ve ASS varsa, kaynak fontları (attachment) fiziksel olarak çıkar
+            fonts_to_attach = []
+            if has_ass and not convert_srt:
+                font_dir = os.path.join(tmp, "fonts")
+                os.makedirs(font_dir, exist_ok=True)
+                
+                for s in streams:
+                    if s.get('codec_type') == 'attachment':
+                        tags = s.get('tags', {})
+                        filename = tags.get('filename')
+                        if not filename:
+                            filename = f"font_{s['index']}.ttf"
+                        
+                        ext_path = os.path.join(font_dir, filename)
+                        
+                        # Fontu fiziksel olarak geçici klasöre çıkart
+                        self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-map', f"0:{s['index']}", '-c', 'copy', ext_path)
+                        
+                        if os.path.exists(ext_path) and os.path.getsize(ext_path) > 0:
+                            mimetype = tags.get('mimetype', 'application/x-truetype-font')
+                            fonts_to_attach.append({'path': ext_path, 'filename': filename, 'mimetype': mimetype})
+
             # AŞAMA 1: Video + Ses + Altyazılar → geçici MKV
-            # (chapter ve font YOK henüz, sadece A/V/Sub)
             tmp_mkv = os.path.join(tmp, "stage1.mkv")
 
             cmd1 = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned: cmd1.extend(['-i', c['path']])
-
-            n_subs = len(cleaned)
 
             cmd1.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned):
@@ -264,6 +286,26 @@ class ConversionThread(QThread):
             cmd1.extend(['-map_metadata', '-1'])
             cmd1.append(tmp_mkv)
             subprocess.run(cmd1, capture_output=True)
+
+            # AŞAMA 2: Geçici MKV + Çıkarılan Chapter dosyası + Çıkarılan Fontlar → final MKV
+            cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
+            
+            # Aşama 1'deki Video, Ses ve Altyazıları al
+            cmd2.extend(['-map', '0'])
+            
+            # Çıkarılan dosyadan metadata ve chapterları eşle
+            cmd2.extend(['-map_metadata', '1'])
+            cmd2.extend(['-map_chapters', '1'])
+            
+            # Çıkarılan fontları teker teker attach (iliştir) et ve mimetypelarını belirle
+            for t_idx, f_info in enumerate(fonts_to_attach):
+                cmd2.extend(['-attach', f_info['path']])
+                cmd2.extend([f"-metadata:s:t:{t_idx}", f"mimetype={f_info['mimetype']}"])
+                cmd2.extend([f"-metadata:s:t:{t_idx}", f"filename={f_info['filename']}"])
+
+            cmd2.extend(['-c', 'copy'])
+            cmd2.append(out_file)
+            subprocess.run(cmd2, capture_output=True)
 
             # ── Chapter metadata dosyası ──────────────────────
             meta_f = os.path.join(tmp, "meta.txt")
