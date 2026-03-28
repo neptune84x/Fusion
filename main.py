@@ -77,7 +77,7 @@ class ConversionThread(QThread):
         if not text: return ""
         text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
         text = re.sub(r'\{\\i1\}|\\i1|<i>|<I>', '', text)
-        text = re.sub(r'\{\\i0\}|\\i0|</i>|</I>', '', text)
+        text = re.sub(r'\{\\i0\}|\\i0|</i>|I>', '', text) # Küçük bir düzeltme: </I> için I>
         text = re.sub(r'\{[^\}]*\}', '', text)
         return f"<i>{text.strip()}</i>"
 
@@ -232,36 +232,34 @@ class ConversionThread(QThread):
             box.extend(["-ipod", out_file])
             subprocess.run(box, capture_output=True)
 
-        # ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
+        # ── MKV modu — FONT SORUNU GİDERİLMİŞ YENİ MANTIKSAL AKIŞ ───────────────────
         else:
-            # 1. Chapter ve Global Metadata Çıkar
+            # 1. Global Metadata ve Chapter Dosyasını Hazırla
             meta_f = os.path.join(tmp, "meta.txt")
             self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', meta_f)
 
-            # 2. Fontları (Attachment) Fiziksel Olarak Dışarı Aktar
+            # 2. Fontları (Attachment) Ham Veri Olarak Ayıkla (En Titiz Yöntem)
             font_list = []
             if has_ass and not convert_srt:
-                attachment_idx = 0
                 for s in streams:
                     if s.get('codec_type') == 'attachment':
+                        global_idx = s['index']
                         tags = s.get('tags', {})
-                        # Orijinal dosya adını al veya fallback üret
-                        fname = tags.get('filename') or f"font_{s['index']}.ttf"
+                        # Boşluklu veya garip isimleri korumak için metadata'dan al
+                        fname = tags.get('filename') or f"attachment_{global_idx}.ttf"
                         mtype = tags.get('mimetype', 'application/x-truetype-font')
                         fpath = os.path.join(tmp, fname)
                         
-                        # KRİTİK: FFmpeg -dump_attachment komutu attachment indexi (t:idx) kullanır.
-                        # Bu komut bir output dosyası değil, yan işlem olarak çalışır.
+                        # KRİTİK DEĞİŞİKLİK: -dump_attachment yerine -map ve ham data copy kullanıyoruz.
+                        # Bu FFmpeg'in attachment'ı bir stream gibi görüp doğrudan dışarı kusmasını sağlar.
                         self.run_ff(ffmpeg, '-y', '-i', self.input_file, 
-                                    '-dump_attachment:t:' + str(attachment_idx), fpath, 
-                                    '-f', 'null', '-')
+                                    '-map', f'0:{global_idx}', '-c', 'copy', '-f', 'data', fpath)
                         
-                        if os.path.exists(fpath):
+                        if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
                             font_list.append({'path': fpath, 'mimetype': mtype, 'filename': fname})
-                        
-                        attachment_idx += 1
 
-            # AŞAMA 1: Video + Ses + Temiz Altyazılar -> Geçici MKV
+            # AŞAMA 1: Video + Audio + Yeni Altyazılar -> Geçici MKV
+            # (Bu aşamada fontları dahil etmiyoruz ki altyazı akışları temiz olsun)
             tmp_mkv = os.path.join(tmp, "stage1.mkv")
             cmd1 = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned: cmd1.extend(['-i', c['path']])
@@ -278,16 +276,15 @@ class ConversionThread(QThread):
             cmd1.append(tmp_mkv)
             subprocess.run(cmd1, capture_output=True)
 
-            # AŞAMA 2: Geçici MKV + Meta Dosyası + Fontlar -> Final MKV
+            # AŞAMA 2: Geçici MKV + Meta Veriler + Fontlar -> Final MKV
+            # Fontları tek tek -attach ile ekleyip metadata'larını (filename/mimetype) manuel giriyoruz.
             cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
             cmd2.extend(['-map', '0', '-c', 'copy'])
-            cmd2.extend(['-map_metadata', '1'])
-            cmd2.extend(['-map_chapters', '1'])
+            cmd2.extend(['-map_metadata', '1', '-map_chapters', '1'])
             
-            # Fiziksel fontları tekrar ekle
             for idx, f in enumerate(font_list):
                 cmd2.extend(['-attach', f['path']])
-                # Metadata taglerini attachment streamine (t) uygula
+                # s:t:idx (stream attachment) üzerinden metadata eşlemesi
                 cmd2.extend([f'-metadata:s:t:{idx}', f'mimetype={f["mimetype"]}'])
                 cmd2.extend([f'-metadata:s:t:{idx}', f'filename={f["filename"]}'])
 
@@ -580,7 +577,7 @@ class MainWindow(QMainWindow):
         if self._settings and self._settings.isVisible(): self._settings.hide()
         super().mousePressEvent(e)
 
-    def _about(self): QMessageBox.information(self,"About Fusion", "Fusion v0.3.1\n\nUniversal macOS video queue processor.\nMKV & MP4 · Subtitle muxing · Chapter preservation\n\nPowered by ffmpeg · ffprobe · MP4Box")
+    def _about(self): QMessageBox.information(self,"About Fusion", "Fusion v0.3.2\n\nUniversal macOS video queue processor.\nMKV & MP4 · Subtitle muxing · Font preservation\n\nPowered by ffmpeg · ffprobe · MP4Box")
     def open_files(self):
         paths,_=QFileDialog.getOpenFileNames(self,"Add Videos","", "Video Files (*.mkv *.mp4 *.avi *.mov *.ts *.m2ts);;All Files (*)")
         if paths: self.add_to_list(paths)
