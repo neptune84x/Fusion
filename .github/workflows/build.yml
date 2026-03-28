@@ -88,10 +88,10 @@ jobs:
       - name: Package as ZIP
         run: |
           cd dist
-          zip -y -r ../Fusion_v0.2.0_Universal.zip Fusion.app
+          zip -y -r ../Fusion_v0.3.0_Universal.zip Fusion.app
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Fusion-App-Universal
-          path: Fusion_v0.2.0_Universal.zip
+          path: Fusion_v0.3.0_Universal.zip
