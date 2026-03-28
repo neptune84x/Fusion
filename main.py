@@ -73,7 +73,6 @@ class ConversionThread(QThread):
         """ffmpeg komutunu sessizce çalıştırır."""
         subprocess.run(list(args), capture_output=True)
 
-    # ── ASS → SRT ─────────────────────────────────────────────
     def clean_italics(self, text):
         if not text: return ""
         text = text.replace(r'\N', '\n').replace(r'\\N', '\n')
@@ -122,11 +121,9 @@ class ConversionThread(QThread):
         prefs   = self.prefs
 
         base        = os.path.splitext(self.input_file)[0]
-        # .fusiontemp — gizli dosya olarak adlandırıldı (nokta öneki = macOS'ta gizli)
         tmp         = base + ".fusiontemp"
         if os.path.exists(tmp): shutil.rmtree(tmp)
         os.makedirs(tmp, exist_ok=True)
-        # macOS'ta klasörü Finder'dan gizle
         try:
             subprocess.run(['chflags', 'hidden', tmp], capture_output=True)
         except: pass
@@ -136,7 +133,6 @@ class ConversionThread(QThread):
         load_ext    = prefs["load_ext_subs"]
         out_file    = f"{base}_Fusion.{'mp4' if fmt == 'mp4' else 'mkv'}"
 
-        # ── Probe ─────────────────────────────────────────────
         try:
             info = json.loads(subprocess.check_output(
                 [ffprobe, '-v', 'quiet', '-print_format', 'json',
@@ -154,9 +150,8 @@ class ConversionThread(QThread):
         l_map = {"tr":"tur","en":"eng","ru":"rus","jp":"jpn","de":"ger",
                  "fr":"fra","es":"spa","it":"ita","pt":"por","ar":"ara"}
 
-        cleaned = []  # {'path', 'lang', 'codec': srt|ass|vtt}
+        cleaned = []
 
-        # ── İç altyazılar ─────────────────────────────────────
         for i, sub in enumerate(int_subs):
             lang  = sub.get('tags', {}).get('language', 'und')
             codec = sub.get('codec_name', '')
@@ -168,7 +163,7 @@ class ConversionThread(QThread):
                     vp = p.replace('.srt', '.vtt'); self.to_vtt(p, vp)
                     cleaned.append({'path': vp, 'lang': l_map.get(lang, lang), 'codec': 'vtt'})
             else:
-                if not convert_srt and codec in ('ass', 'ssa'):
+                if not convert_srt and codec in ('ass', 'ssa', 'ass '):
                     p = os.path.join(tmp, f"int_{i}.ass")
                     self.run_ff(ffmpeg, '-y', '-i', self.input_file,
                                 '-map', f"0:{sub['index']}", p)
@@ -181,7 +176,6 @@ class ConversionThread(QThread):
                     if os.path.exists(p) and os.path.getsize(p) > 0:
                         cleaned.append({'path': p, 'lang': l_map.get(lang, lang), 'codec': 'srt'})
 
-        # ── Dış altyazılar ────────────────────────────────────
         if load_ext:
             for fp in sorted(glob.glob(base + "*.*")):
                 if not fp.lower().endswith(('.srt', '.ass')): continue
@@ -210,7 +204,6 @@ class ConversionThread(QThread):
 
         has_ass = any(c['codec'] == 'ass' for c in cleaned)
 
-        # ── MP4 modu ──────────────────────────────────────────
         if fmt == "mp4":
             tmp_mp4 = os.path.join(tmp, "video_pure.mp4")
             cmd = [ffmpeg, '-y', '-i', self.input_file, '-map', '0:v:0']
@@ -241,12 +234,11 @@ class ConversionThread(QThread):
 
         # ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
         else:
-            # 1. ADIM: Bölüm (Chapter) İsimlerini ve Global Metadatayı Fiziksel Dosyaya Çıkar
+            # 1. Chapter ve Global Metadata Çıkar (Kaynaktan temiz dosya olarak)
             meta_f = os.path.join(tmp, "meta.txt")
-            # ffmetadata formatı chapter isimlerini ve sürelerini tam olarak korur
             self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', meta_f)
 
-            # 2. ADIM: Fontları (Attachments) Fiziksel Olarak Çıkart
+            # 2. Fontları (Attachment) Fiziksel Olarak Dışarı Aktar
             font_list = []
             if has_ass and not convert_srt:
                 for s in streams:
@@ -255,14 +247,11 @@ class ConversionThread(QThread):
                         fname = tags.get('filename') or f"font_{s['index']}.ttf"
                         mtype = tags.get('mimetype', 'application/x-truetype-font')
                         fpath = os.path.join(tmp, fname)
-                        
-                        # Fontu kaynaktan fiziksel dosyaya dök
                         self.run_ff(ffmpeg, '-y', '-dump_attachment:t', str(s['index']), '-i', self.input_file, fpath)
-                        
                         if os.path.exists(fpath):
                             font_list.append({'path': fpath, 'mimetype': mtype, 'filename': fname})
 
-            # 3. ADIM (AŞAMA 1): Video + Ses + Temizlenmiş Altyazılar -> Geçici MKV
+            # AŞAMA 1: Video + Ses + Temiz Altyazılar -> Geçici MKV (Diller burada atanır)
             tmp_mkv = os.path.join(tmp, "stage1.mkv")
             cmd1 = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned: cmd1.extend(['-i', c['path']])
@@ -270,96 +259,25 @@ class ConversionThread(QThread):
             cmd1.extend(['-map', '0:v:0', '-map', '0:a?'])
             for i, c in enumerate(cleaned):
                 cmd1.extend(['-map', f'{i+1}:0'])
-                # ASS ise direkt kopyala (fontlar sonra eklenecek), SRT ise subrip'e çevir
                 codec = 'copy' if c['codec'] == 'ass' else 'subrip'
                 cmd1.extend([f'-c:s:{i}', codec])
-                # Dil etiketlerini (Dillerin kaybolmaması için kritik) burada yazıyoruz
-                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
+                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"]) # Diller burada korunuyor
 
             cmd1.extend(['-c:v', 'copy', '-c:a', 'copy'])
-            # Stage 1'de metadata ve chapterları temizle (Stage 2'de temiz kaynaktan eklenecek)
-            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1'])
+            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1']) # Globali temizle
             cmd1.append(tmp_mkv)
             subprocess.run(cmd1, capture_output=True)
 
-            # 4. ADIM (AŞAMA 2): Geçici MKV + Chapter Dosyası + Fontlar -> Final Çıktı
-            # Girdi 0: Temiz video/ses/altyazı | Girdi 1: Metadata/Chapter dosyası
+            # AŞAMA 2: Geçici MKV + Meta Dosyası + Fontlar -> Final MKV
             cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
+            cmd2.extend(['-map', '0', '-c', 'copy']) # Stage 1'deki streamleri ve dillerini al
+            cmd2.extend(['-map_metadata', '1'])      # Meta dosyasından global etiketleri al
+            cmd2.extend(['-map_chapters', '1'])      # Meta dosyasından chapter isimlerini al
             
-            # Stage 1'den gelen her şeyi al (V/A/Sub)
-            cmd2.extend(['-map', '0'])
-            
-            # Metadata dosyasından global etiketleri ve chapter isimlerini aktar
-            cmd2.extend(['-map_metadata', '1'])
-            cmd2.extend(['-map_chapters', '1'])
-            
-            # Fiziksel olarak çıkardığımız fontları yeni dosyaya ekle
             for idx, f in enumerate(font_list):
                 cmd2.extend(['-attach', f['path']])
-                # Fontun mimetype ve filename bilgilerini koru
                 cmd2.extend([f'-metadata:s:t:{idx}', f'mimetype={f["mimetype"]}'])
                 cmd2.extend([f'-metadata:s:t:{idx}', f'filename={f["filename"]}'])
-
-            cmd2.extend(['-c', 'copy', out_file])
-            subprocess.run(cmd2, capture_output=True)
-            
-                else:
-                    cmd1.extend([f'-c:s:{i}', 'subrip'])
-                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
-
-            cmd1.extend(['-c:v', 'copy', '-c:a', 'copy'])
-            # Aşama 1'de metadata temizle, chapter yok henüz
-            cmd1.extend(['-map_metadata', '-1'])
-            cmd1.append(tmp_mkv)
-            subprocess.run(cmd1, capture_output=True)
-
-            # ── Chapter metadata dosyası ──────────────────────
-            meta_f = os.path.join(tmp, "meta.txt")
-            with open(meta_f, "w", encoding="utf-8") as ff:
-                ff.write(";FFMETADATA1\n")
-                for c in chaps:
-                    start_ms = int(float(c['start_time']) * 1000)
-                    end_ms   = int(float(c['end_time'])   * 1000)
-                    title    = (c.get('tags') or {}).get('title') or f"Chapter {c.get('id',0)}"
-                    ff.write(f"\n[CHAPTER]\n")
-                    ff.write(f"TIMEBASE=1/1000\n")
-                    ff.write(f"START={start_ms}\n")
-                    ff.write(f"END={end_ms}\n")
-                    ff.write(f"title={title}\n")
-
-            # AŞAMA 2: Geçici MKV + Chapter metadata [+ Fontlar] → final MKV
-            # Girdi 0 = stage1.mkv  (A/V/Sub, temiz)
-            # Girdi 1 = meta.txt    (chapter bilgisi)
-            # -map_chapters 1       → meta.txt'ten chapter isimleri al
-            # -map 0:t?             → stage1'deki attachment fontları al
-            #                         (sadece has_ass && !convert_srt ise)
-            #
-            # NOT: attachment fontlar stage1 aşamasında kaynak'tan
-            #      otomatik kopyalanmaz; bu yüzden 2. aşamada kaynak
-            #      dosyadan (-i self.input_file) alıyoruz.
-
-            if has_ass and not convert_srt:
-                # Girdi 0 = stage1.mkv, Girdi 1 = kaynak (font için), Girdi 2 = meta
-                cmd2 = [ffmpeg, '-y',
-                        '-i', tmp_mkv,
-                        '-i', self.input_file,
-                        '-i', meta_f]
-                # Tüm stream'leri stage1'den kopyala
-                cmd2.extend(['-map', '0'])
-                # Kaynak dosyadan sadece attachment fontları ekle
-                cmd2.extend(['-map', '1:t?'])
-                cmd2.extend(['-c', 'copy'])
-                cmd2.extend(['-map_metadata', '-1'])
-                cmd2.extend(['-map_chapters', '2'])
-            else:
-                # Font yok, sadece chapter ekle
-                cmd2 = [ffmpeg, '-y',
-                        '-i', tmp_mkv,
-                        '-i', meta_f]
-                cmd2.extend(['-map', '0'])
-                cmd2.extend(['-c', 'copy'])
-                cmd2.extend(['-map_metadata', '-1'])
-                cmd2.extend(['-map_chapters', '1'])
 
             cmd2.append(out_file)
             subprocess.run(cmd2, capture_output=True)
@@ -392,34 +310,26 @@ class IconButton(QPushButton):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
-
-        lbl_h    = 16
-        icon_h   = H - lbl_h
+        lbl_h = 16
+        icon_h = H - lbl_h
         circle_r = 22.0
-        cx       = W / 2.0
-        # Daire tam görünür: en az r+2 piksel aşağıda
-        cy       = max(circle_r + 2.0, icon_h / 2.0)
-
-        # Gri daire
+        cx = W / 2.0
+        cy = max(circle_r + 2.0, icon_h / 2.0)
         alpha = 22 + (30 if self._press else (15 if self._hover else 0))
         p.setBrush(QBrush(QColor(0, 0, 0, alpha)))
         p.setPen(Qt.PenStyle.NoPen)
         p.drawEllipse(QPointF(cx, cy), circle_r, circle_r)
-
         ink = QColor(TXT_PRIMARY)
 
-        # ── PLAY ─────────────────────────────────────────────
         if self._type == "play":
             p.setBrush(QBrush(ink)); p.setPen(Qt.PenStyle.NoPen)
             hs = 9.0
             path = QPainterPath()
             path.moveTo(cx - 6.0 + 1.5, cy - hs)
             path.lineTo(cx - 6.0 + 1.5, cy + hs)
-            path.lineTo(cx + 8.0,        cy)
+            path.lineTo(cx + 8.0, cy)
             path.closeSubpath()
             p.drawPath(path)
-
-        # ── GEAR ─────────────────────────────────────────────
         elif self._type == "gear":
             p.save(); p.translate(cx, cy)
             p.setBrush(QBrush(ink)); p.setPen(Qt.PenStyle.NoPen)
@@ -437,41 +347,28 @@ class IconButton(QPushButton):
             outer.closeSubpath()
             hole=QPainterPath(); hole.addEllipse(QPointF(0,0),R_hole,R_hole)
             p.drawPath(outer.subtracted(hole)); p.restore()
-
-        # ── ADD ITEM (belge + artı) ───────────────────────────
         elif self._type == "tray_down":
-            pen=QPen(ink,1.5,Qt.PenStyle.SolidLine,
-                     Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin)
+            pen=QPen(ink,1.5,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin)
             p.setPen(pen); p.setBrush(Qt.BrushStyle.NoBrush)
-            dw=13.0; dh=15.0
-            dx=cx-dw/2-1.5; dy=cy-dh/2-1.0; corner=3.2
+            dw=13.0; dh=15.0; dx=cx-dw/2-1.5; dy=cy-dh/2-1.0; corner=3.2
             doc=QPainterPath()
-            doc.moveTo(dx,dy); doc.lineTo(dx+dw-corner,dy)
-            doc.lineTo(dx+dw,dy+corner); doc.lineTo(dx+dw,dy+dh)
-            doc.lineTo(dx,dy+dh); doc.lineTo(dx,dy); doc.closeSubpath()
+            doc.moveTo(dx,dy); doc.lineTo(dx+dw-corner,dy); doc.lineTo(dx+dw,dy+corner); doc.lineTo(dx+dw,dy+dh); doc.lineTo(dx,dy+dh); doc.lineTo(dx,dy); doc.closeSubpath()
             p.drawPath(doc)
             fold=QPainterPath()
-            fold.moveTo(dx+dw-corner,dy); fold.lineTo(dx+dw-corner,dy+corner)
-            fold.lineTo(dx+dw,dy+corner); p.drawPath(fold)
+            fold.moveTo(dx+dw-corner,dy); fold.lineTo(dx+dw-corner,dy+corner); fold.lineTo(dx+dw,dy+corner); p.drawPath(fold)
             bcx=dx+dw+2.5; bcy=dy+dh+1.0; br=5.0
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QBrush(QColor(BG_TOOLBAR)))
-            p.drawEllipse(QPointF(bcx,bcy),br+1.0,br+1.0)
-            p.setBrush(QBrush(ink))
-            p.drawEllipse(QPointF(bcx,bcy),br,br)
+            p.setPen(Qt.PenStyle.NoPen); p.setBrush(QBrush(QColor(BG_TOOLBAR))); p.drawEllipse(QPointF(bcx,bcy),br+1.0,br+1.0)
+            p.setBrush(QBrush(ink)); p.drawEllipse(QPointF(bcx,bcy),br,br)
             pp=QPen(QColor(BG_TOOLBAR),1.4,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap)
             p.setPen(pp); p.setBrush(Qt.BrushStyle.NoBrush); pl=2.8
             p.drawLine(QPointF(bcx-pl,bcy),QPointF(bcx+pl,bcy))
             p.drawLine(QPointF(bcx,bcy-pl),QPointF(bcx,bcy+pl))
 
-        # Etiket
         p.setPen(QPen(ink)); p.setBrush(Qt.BrushStyle.NoBrush)
         f=QFont()
         if sys.platform=="darwin": f.setFamily(".AppleSystemUIFont")
         f.setPointSize(10); p.setFont(f)
-        p.drawText(QRect(0,H-lbl_h,W,lbl_h),
-                   Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignVCenter,
-                   self._label)
+        p.drawText(QRect(0,H-lbl_h,W,lbl_h), Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignVCenter, self._label)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -496,7 +393,6 @@ class FileWidget(QFrame):
 
     def set_status(self,m): self.status=m; self._refresh()
     def set_selected(self,v): self.is_selected=v; self._refresh()
-
     def _refresh(self):
         dot_c={"waiting":DOT_WAITING,"working":DOT_WORKING,"done":DOT_DONE}.get(self.status,DOT_WAITING)
         if self.is_selected:
@@ -515,7 +411,6 @@ class FileWidget(QFrame):
 class QueueList(QWidget):
     files_dropped = pyqtSignal(list)
     ROW_H = FileWidget.ROW_H
-
     def __init__(self, main_win):
         super().__init__()
         self.main_win=main_win; self.items=[]
@@ -524,9 +419,7 @@ class QueueList(QWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._ctx_menu)
         self.setMinimumHeight(200)
-        self._vl=QVBoxLayout(self)
-        self._vl.setContentsMargins(0,0,0,0); self._vl.setSpacing(0)
-        self._vl.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._vl=QVBoxLayout(self); self._vl.setContentsMargins(0,0,0,0); self._vl.setSpacing(0); self._vl.setAlignment(Qt.AlignmentFlag.AlignTop)
 
     def paintEvent(self,_):
         p=QPainter(self)
@@ -534,9 +427,7 @@ class QueueList(QWidget):
             c=QColor(ZEBRA_ODD) if i%2==1 else QColor(ZEBRA_EVEN)
             p.fillRect(0,i*self.ROW_H,self.width(),self.ROW_H,c)
         if not self._sel_rect.isNull():
-            p.setPen(QPen(QColor(21,96,212,180),1))
-            p.setBrush(QBrush(QColor(21,96,212,35)))
-            p.drawRect(self._sel_rect)
+            p.setPen(QPen(QColor(21,96,212,180),1)); p.setBrush(QBrush(QColor(21,96,212,35))); p.drawRect(self._sel_rect)
 
     def mousePressEvent(self,e):
         if e.button()==Qt.MouseButton.LeftButton:
@@ -551,55 +442,17 @@ class QueueList(QWidget):
             for it in self.items: it.set_selected(self._sel_rect.intersects(it.geometry()))
             self.update()
 
-    def mouseReleaseEvent(self,e):
-        self._sel_start=None; self._sel_rect=QRect(); self.update()
-
+    def mouseReleaseEvent(self,e): self._sel_start=None; self._sel_rect=QRect(); self.update()
     def dragEnterEvent(self,e):
         if e.mimeData().hasUrls(): e.acceptProposedAction()
-    def dropEvent(self,e):
-        self.files_dropped.emit([u.toLocalFile() for u in e.mimeData().urls()])
+    def dropEvent(self,e): self.files_dropped.emit([u.toLocalFile() for u in e.mimeData().urls()])
 
     def _ctx_menu(self, pos):
-        # QMenu'yu liste widget'ının renk paletinden BAĞIMSIZ olarak
-        # ana pencere üzerinde oluştur — seçili mavi arka plan etkisini kırar
         m = QMenu(self.main_win)
-
-        # Stil: seçili öğe üzerinde de okunabilir olması için açık arka plan zorla
-        m.setStyleSheet("""
-            QMenu {
-                background: white;
-                border: 1px solid #c8c8c8;
-                border-radius: 6px;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 5px 20px;
-                font-size: 13px;
-                color: #1d1d1f;
-                background: transparent;
-            }
-            QMenu::item:selected {
-                background: #1560d4;
-                color: white;
-                border-radius: 4px;
-            }
-            QMenu::item:disabled {
-                color: #b0b0b8;
-            }
-        """)
-
-        a_rem = QAction("Remove Selected", m)
-        a_rem.setEnabled(any(it.is_selected for it in self.items))
-        a_rem.triggered.connect(self.main_win.remove_selected)
-
-        a_clr = QAction("Clear Completed", m)
-        a_clr.setEnabled(any(it.status == "done" for it in self.items))
-        a_clr.triggered.connect(self.main_win.remove_completed)
-
-        m.addAction(a_rem)
-        m.addAction(a_clr)
-        # Menüyü global koordinatta göster
-        m.exec(self.mapToGlobal(pos))
+        m.setStyleSheet("QMenu { background: white; border: 1px solid #c8c8c8; border-radius: 6px; padding: 4px 0px; } QMenu::item { padding: 5px 20px; font-size: 13px; color: #1d1d1f; background: transparent; } QMenu::item:selected { background: #1560d4; color: white; border-radius: 4px; }")
+        a_rem = QAction("Remove Selected", m); a_rem.setEnabled(any(it.is_selected for it in self.items)); a_rem.triggered.connect(self.main_win.remove_selected)
+        a_clr = QAction("Clear Completed", m); a_clr.setEnabled(any(it.status == "done" for it in self.items)); a_clr.triggered.connect(self.main_win.remove_completed)
+        m.addAction(a_rem); m.addAction(a_clr); m.exec(self.mapToGlobal(pos))
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -607,9 +460,7 @@ class QueueList(QWidget):
 # ═══════════════════════════════════════════════════════════════
 class SettingsPanel(QDialog):
     def __init__(self, main_win):
-        super().__init__(main_win,
-            Qt.WindowType.Dialog|Qt.WindowType.FramelessWindowHint|
-            Qt.WindowType.NoDropShadowWindowHint)
+        super().__init__(main_win, Qt.WindowType.Dialog|Qt.WindowType.FramelessWindowHint|Qt.WindowType.NoDropShadowWindowHint)
         self.mw=main_win; self.prefs=dict(main_win.prefs)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose,False)
@@ -633,64 +484,36 @@ class SettingsPanel(QDialog):
         return f
 
     def _sep(self):
-        fr=QFrame(); fr.setFrameShape(QFrame.Shape.HLine)
-        fr.setFixedHeight(1); fr.setStyleSheet(f"background:{SECT_LINE}; border:none;")
+        fr=QFrame(); fr.setFrameShape(QFrame.Shape.HLine); fr.setFixedHeight(1); fr.setStyleSheet(f"background:{SECT_LINE}; border:none;")
         return fr
 
     def _section(self,text):
-        lbl=QLabel(text); lbl.setFont(self._font(12,bold=True))
-        lbl.setStyleSheet(f"color:{TXT_PRIMARY};"); return lbl
+        lbl=QLabel(text); lbl.setFont(self._font(12,bold=True)); lbl.setStyleSheet(f"color:{TXT_PRIMARY};"); return lbl
 
     def _cb(self,text,key):
-        cb=QCheckBox(text); cb.setFont(self._font(12))
-        cb.setChecked(self.prefs.get(key,False))
-        cb.toggled.connect(lambda _:self._save())
-        return cb
+        cb=QCheckBox(text); cb.setFont(self._font(12)); cb.setChecked(self.prefs.get(key,False)); cb.toggled.connect(lambda _:self._save()); return cb
 
     def _save(self):
         fmt="mp4" if self.combo_fmt.currentIndex()==1 else "mkv"
-        self.prefs["output_format"]=fmt
-        self.prefs["convert_srt"]=self.cb_conv.isChecked()
-        self.prefs["load_ext_subs"]=self.cb_ext.isChecked()
-        self.cb_conv.setVisible(fmt=="mkv")
-        save_prefs(self.prefs); self.mw.prefs=dict(self.prefs)
+        self.prefs["output_format"]=fmt; self.prefs["convert_srt"]=self.cb_conv.isChecked(); self.prefs["load_ext_subs"]=self.cb_ext.isChecked()
+        self.cb_conv.setVisible(fmt=="mkv"); save_prefs(self.prefs); self.mw.prefs=dict(self.prefs)
 
     def _on_fmt(self): self._save(); self.adjustSize()
 
     def _build(self):
         root=QVBoxLayout(self); root.setContentsMargins(18,14,18,16); root.setSpacing(6)
         root.addWidget(self._section("Output Format:"))
-        self.combo_fmt=QComboBox(); self.combo_fmt.setFont(self._font(12))
-        self.combo_fmt.addItems(["mkv","mp4"])
-        self.combo_fmt.setCurrentIndex(0 if self.prefs["output_format"]=="mkv" else 1)
-        self.combo_fmt.setMinimumWidth(160)
-        self.combo_fmt.setStyleSheet("""
-            QComboBox{border:1px solid #b8b8be;border-radius:5px;padding:2px 8px;
-                      background:white;color:#1d1d1f;min-height:24px;}
-            QComboBox::drop-down{border:none;width:20px;}
-            QComboBox QAbstractItemView{background:white;color:#1d1d1f;
-                selection-background-color:#1560d4;selection-color:white;outline:none;}
-        """)
+        self.combo_fmt=QComboBox(); self.combo_fmt.setFont(self._font(12)); self.combo_fmt.addItems(["mkv","mp4"]); self.combo_fmt.setCurrentIndex(0 if self.prefs["output_format"]=="mkv" else 1); self.combo_fmt.setMinimumWidth(160)
+        self.combo_fmt.setStyleSheet("QComboBox{border:1px solid #b8b8be;border-radius:5px;padding:2px 8px;background:white;color:#1d1d1f;min-height:24px;} QComboBox::drop-down{border:none;width:20px;} QComboBox QAbstractItemView{background:white;color:#1d1d1f;selection-background-color:#1560d4;selection-color:white;outline:none;}")
         self.combo_fmt.currentIndexChanged.connect(self._on_fmt)
-        fmt_hl=QHBoxLayout(); fmt_hl.setContentsMargins(0,0,0,0)
-        fmt_hl.addWidget(self.combo_fmt); fmt_hl.addStretch()
-        root.addLayout(fmt_hl)
-        self.cb_conv=self._cb("Convert subtitles to SRT","convert_srt")
-        self.cb_conv.setVisible(self.prefs["output_format"]=="mkv")
-        root.addWidget(self.cb_conv)
+        fmt_hl=QHBoxLayout(); fmt_hl.setContentsMargins(0,0,0,0); fmt_hl.addWidget(self.combo_fmt); fmt_hl.addStretch(); root.addLayout(fmt_hl)
+        self.cb_conv=self._cb("Convert subtitles to SRT","convert_srt"); self.cb_conv.setVisible(self.prefs["output_format"]=="mkv"); root.addWidget(self.cb_conv)
         root.addSpacing(4); root.addWidget(self._sep()); root.addSpacing(4)
         root.addWidget(self._section("Subtitles:"))
-        self.cb_ext=self._cb("Load external subtitles","load_ext_subs")
-        root.addWidget(self.cb_ext); root.addStretch()
+        self.cb_ext=self._cb("Load external subtitles","load_ext_subs"); root.addWidget(self.cb_ext); root.addStretch()
 
     def sync(self,prefs):
-        self.prefs=dict(prefs)
-        self.combo_fmt.blockSignals(True)
-        self.combo_fmt.setCurrentIndex(0 if prefs["output_format"]=="mkv" else 1)
-        self.combo_fmt.blockSignals(False)
-        self.cb_conv.setChecked(prefs["convert_srt"])
-        self.cb_conv.setVisible(prefs["output_format"]=="mkv")
-        self.cb_ext.setChecked(prefs["load_ext_subs"])
+        self.prefs=dict(prefs); self.combo_fmt.blockSignals(True); self.combo_fmt.setCurrentIndex(0 if prefs["output_format"]=="mkv" else 1); self.combo_fmt.blockSignals(False); self.cb_conv.setChecked(prefs["convert_srt"]); self.cb_conv.setVisible(prefs["output_format"]=="mkv"); self.cb_ext.setChecked(prefs["load_ext_subs"])
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -699,55 +522,33 @@ class SettingsPanel(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Fusion"); self.resize(560,420)
-        self.setMinimumSize(480,300); self.setAcceptDrops(True)
-        self.prefs=load_prefs(); self.threads=[]; self.active_queue=[]; self._settings=None
+        self.setWindowTitle("Fusion"); self.resize(560,420); self.setMinimumSize(480,300); self.setAcceptDrops(True); self.prefs=load_prefs(); self.threads=[]; self.active_queue=[]; self._settings=None
         self._build_ui(); self._build_menu()
 
     def _build_ui(self):
         root=QVBoxLayout(); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
-        tb=QWidget(); tb.setFixedHeight(70)
-        tb.setStyleSheet(f"background:{BG_TOOLBAR}; border-bottom:1px solid {BORDER_TOOLBAR};")
+        tb=QWidget(); tb.setFixedHeight(70); tb.setStyleSheet(f"background:{BG_TOOLBAR}; border-bottom:1px solid {BORDER_TOOLBAR};")
         tb_hl=QHBoxLayout(tb); tb_hl.setContentsMargins(12,0,6,0); tb_hl.setSpacing(0)
         title=QLabel("Queue"); tf=QFont()
         if sys.platform=="darwin": tf.setFamily(".AppleSystemUIFont")
-        tf.setPointSize(13); tf.setBold(True); title.setFont(tf)
-        title.setStyleSheet(f"color:{TXT_PRIMARY};")
-        self.btn_start=IconButton("play","Start")
-        self.btn_settings=IconButton("gear","Settings")
-        self.btn_add=IconButton("tray_down","Add Item")
-        tb_hl.addWidget(title); tb_hl.addStretch()
-        tb_hl.addWidget(self.btn_start); tb_hl.addWidget(self.btn_settings); tb_hl.addWidget(self.btn_add)
-        self.btn_start.clicked.connect(self.start_processing)
-        self.btn_settings.clicked.connect(self._toggle_settings)
-        self.btn_add.clicked.connect(self.open_files)
-        scroll=QScrollArea(); scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"background:{BG_WIN};")
-        self._queue=QueueList(self); self._queue.files_dropped.connect(self.add_to_list)
-        scroll.setWidget(self._queue)
-        footer=QWidget(); footer.setFixedHeight(24)
-        footer.setStyleSheet(f"background:{BG_FOOTER}; border-top:1px solid {BORDER_FOOTER};")
+        tf.setPointSize(13); tf.setBold(True); title.setFont(tf); title.setStyleSheet(f"color:{TXT_PRIMARY};")
+        self.btn_start=IconButton("play","Start"); self.btn_settings=IconButton("gear","Settings"); self.btn_add=IconButton("tray_down","Add Item")
+        tb_hl.addWidget(title); tb_hl.addStretch(); tb_hl.addWidget(self.btn_start); tb_hl.addWidget(self.btn_settings); tb_hl.addWidget(self.btn_add)
+        self.btn_start.clicked.connect(self.start_processing); self.btn_settings.clicked.connect(self._toggle_settings); self.btn_add.clicked.connect(self.open_files)
+        scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame); scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); scroll.setStyleSheet(f"background:{BG_WIN};")
+        self._queue=QueueList(self); self._queue.files_dropped.connect(self.add_to_list); scroll.setWidget(self._queue)
+        footer=QWidget(); footer.setFixedHeight(24); footer.setStyleSheet(f"background:{BG_FOOTER}; border-top:1px solid {BORDER_FOOTER};")
         f_hl=QHBoxLayout(footer); f_hl.setContentsMargins(10,0,10,0); f_hl.setSpacing(0)
         self._status_lbl=QLabel("0 items in queue.")
         sf=QFont()
         if sys.platform=="darwin": sf.setFamily(".AppleSystemUIFont")
-        sf.setPointSize(11); self._status_lbl.setFont(sf)
-        self._status_lbl.setStyleSheet(f"color:{TXT_SECONDARY};")
-        self._progress=QProgressBar(); self._progress.setFixedSize(130,5)
-        self._progress.setTextVisible(False); self._progress.setValue(0)
-        self._progress.setStyleSheet(f"""
-            QProgressBar{{background:{PROG_BG};border-radius:2px;border:none;}}
-            QProgressBar::chunk{{background:{PROG_FG};border-radius:2px;}}""")
-        f_hl.addWidget(self._status_lbl); f_hl.addStretch(); f_hl.addWidget(self._progress)
-        root.addWidget(tb); root.addWidget(scroll); root.addWidget(footer)
-        cw=QWidget(); cw.setLayout(root); cw.setStyleSheet(f"background:{BG_WIN};")
-        self.setCentralWidget(cw)
+        sf.setPointSize(11); self._status_lbl.setFont(sf); self._status_lbl.setStyleSheet(f"color:{TXT_SECONDARY};")
+        self._progress=QProgressBar(); self._progress.setFixedSize(130,5); self._progress.setTextVisible(False); self._progress.setValue(0); self._progress.setStyleSheet(f"QProgressBar{{background:{PROG_BG};border-radius:2px;border:none;}} QProgressBar::chunk{{background:{PROG_FG};border-radius:2px;}}")
+        f_hl.addWidget(self._status_lbl); f_hl.addStretch(); f_hl.addWidget(self._progress); root.addWidget(tb); root.addWidget(scroll); root.addWidget(footer)
+        cw=QWidget(); cw.setLayout(root); cw.setStyleSheet(f"background:{BG_WIN};"); self.setCentralWidget(cw)
 
     def _build_menu(self):
-        mb=self.menuBar()
-        app_m=mb.addMenu("Fusion")
+        mb=self.menuBar(); app_m=mb.addMenu("Fusion")
         a_about=QAction("About Fusion",self); a_about.triggered.connect(self._about)
         a_quit=QAction("Quit Fusion",self); a_quit.setShortcut(QKeySequence("Ctrl+Q")); a_quit.triggered.connect(self.close)
         app_m.addAction(a_about); app_m.addSeparator(); app_m.addAction(a_quit)
@@ -756,82 +557,49 @@ class MainWindow(QMainWindow):
         a_rem=QAction("Remove Selected",self); a_rem.setShortcut(QKeySequence("Backspace")); a_rem.triggered.connect(self.remove_selected)
         a_clr=QAction("Clear Completed",self); a_clr.triggered.connect(self.remove_completed)
         file_m.addAction(a_add); file_m.addSeparator(); file_m.addAction(a_rem); file_m.addAction(a_clr)
-        q_m=mb.addMenu("Queue")
-        a_st=QAction("Start",self); a_st.setShortcut(QKeySequence("Ctrl+Return")); a_st.triggered.connect(self.start_processing)
-        q_m.addAction(a_st)
+        q_m=mb.addMenu("Queue"); a_st=QAction("Start",self); a_st.setShortcut(QKeySequence("Ctrl+Return")); a_st.triggered.connect(self.start_processing); q_m.addAction(a_st)
 
     def _toggle_settings(self):
         if self._settings is None: self._settings=SettingsPanel(self)
         if self._settings.isVisible(): self._settings.hide(); return
-        self._settings.sync(self.prefs)
-        btn=self.btn_settings
-        gp=btn.mapToGlobal(QPoint(btn.width()//2,btn.height()+2))
-        sw=max(self._settings.sizeHint().width(),280)
-        gp.setX(gp.x()-sw//2); self._settings.move(gp)
-        self._settings.show(); self._settings.raise_(); self._settings.activateWindow()
+        self._settings.sync(self.prefs); btn=self.btn_settings; gp=btn.mapToGlobal(QPoint(btn.width()//2,btn.height()+2)); sw=max(self._settings.sizeHint().width(),280); gp.setX(gp.x()-sw//2); self._settings.move(gp); self._settings.show(); self._settings.raise_(); self._settings.activateWindow()
 
     def mousePressEvent(self,e):
         if self._settings and self._settings.isVisible(): self._settings.hide()
         super().mousePressEvent(e)
 
-    def _about(self):
-        QMessageBox.information(self,"About Fusion",
-            "Fusion v0.3.0\n\nUniversal macOS video queue processor.\n"
-            "MKV & MP4 · Subtitle muxing · Chapter preservation\n\n"
-            "Powered by ffmpeg · ffprobe · MP4Box")
-
+    def _about(self): QMessageBox.information(self,"About Fusion", "Fusion v0.3.1\n\nUniversal macOS video queue processor.\nMKV & MP4 · Subtitle muxing · Chapter preservation\n\nPowered by ffmpeg · ffprobe · MP4Box")
     def open_files(self):
-        paths,_=QFileDialog.getOpenFileNames(self,"Add Videos","",
-            "Video Files (*.mkv *.mp4 *.avi *.mov *.ts *.m2ts);;All Files (*)")
+        paths,_=QFileDialog.getOpenFileNames(self,"Add Videos","", "Video Files (*.mkv *.mp4 *.avi *.mov *.ts *.m2ts);;All Files (*)")
         if paths: self.add_to_list(paths)
-
     def add_to_list(self,paths):
         for p in paths:
-            w=FileWidget(os.path.basename(p),self._queue); w.full_path=p
-            self._queue._vl.addWidget(w); self._queue.items.append(w)
+            w=FileWidget(os.path.basename(p),self._queue); w.full_path=p; self._queue._vl.addWidget(w); self._queue.items.append(w)
         self._refresh_status()
-
     def remove_completed(self):
-        for it in [i for i in self._queue.items if i.status=="done"]:
-            self._queue.items.remove(it); it.setParent(None)
+        for it in [i for i in self._queue.items if i.status=="done"]: self._queue.items.remove(it); it.setParent(None)
         self._refresh_status()
-
     def remove_selected(self):
-        for it in [i for i in self._queue.items if i.is_selected]:
-            self._queue.items.remove(it); it.setParent(None)
+        for it in [i for i in self._queue.items if i.is_selected]: self._queue.items.remove(it); it.setParent(None)
         self._refresh_status()
-
     def _refresh_status(self):
-        n=len(self._queue.items)
-        self._status_lbl.setText(f"{n} item{'s' if n!=1 else ''} in queue.")
-
+        n=len(self._queue.items); self._status_lbl.setText(f"{n} item{'s' if n!=1 else ''} in queue.")
     def start_processing(self):
         self.active_queue=[i for i in self._queue.items if i.status=="waiting"]
         if self.active_queue: self._progress.setValue(0); self._process_next()
-
     def _process_next(self):
         if not self.active_queue: self._status_lbl.setText("Completed."); return
-        item=self.active_queue.pop(0); item.set_status("working")
-        t=ConversionThread(item.full_path,item,dict(self.prefs))
-        t.finished_signal.connect(self._on_done); self.threads.append(t); t.start()
-
+        item=self.active_queue.pop(0); item.set_status("working"); t=ConversionThread(item.full_path,item,dict(self.prefs)); t.finished_signal.connect(self._on_done); self.threads.append(t); t.start()
     def _on_done(self,t):
-        t.widget.set_status("done")
-        done=sum(1 for i in self._queue.items if i.status=="done")
-        total=len(self._queue.items)
+        t.widget.set_status("done"); done=sum(1 for i in self._queue.items if i.status=="done"); total=len(self._queue.items)
         if total: self._progress.setValue(int(done/total*100))
         self._process_next()
-
     def dragEnterEvent(self,e):
         if e.mimeData().hasUrls(): e.acceptProposedAction()
-    def dropEvent(self,e):
-        self.add_to_list([u.toLocalFile() for u in e.mimeData().urls()])
-
+    def dropEvent(self,e): self.add_to_list([u.toLocalFile() for u in e.mimeData().urls()])
 
 if __name__=="__main__":
-    app=QApplication(sys.argv)
-    app.setApplicationName(APP); app.setOrganizationName(ORG); app.setStyle("macos")
+    app=QApplication(sys.argv); app.setApplicationName(APP); app.setOrganizationName(ORG); app.setStyle("macos")
     f=QFont()
     if sys.platform=="darwin": f.setFamily(".AppleSystemUIFont")
-    f.setPointSize(13); app.setFont(f)
-    w=MainWindow(); w.show(); sys.exit(app.exec())
+    f.setPointSize(13); app.setFont(f); w=MainWindow(); w.show(); sys.exit(app.exec())
