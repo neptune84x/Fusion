@@ -1,7 +1,7 @@
 # 🌀 Fusion
 
 ![macOS](https://img.shields.io/badge/platform-macOS-000000.svg?style=for-the-badge&logo=apple&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.2.0-blue.svg?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-0.3.0-blue.svg?style=for-the-badge)
 ![FFmpeg](https://img.shields.io/badge/engine-FFmpeg-0078D4.svg?style=for-the-badge&logo=ffmpeg&logoColor=white)
 
 **Fusion** is a streamlined macOS utility designed to optimize media containers for the Apple ecosystem (Infuse, Apple TV, and macOS). It focuses on standardizing subtitle formats and media streams to ensure perfect playback without quality loss.
@@ -34,7 +34,7 @@
 
 ---
 
-## 🆕 What's New in v0.2.0
+## 🆕 What's New in v0.3.0
 
 - **Matroska (SubRip) Support:** Enhanced MKV output format with specialized SubRip subtitle mapping.
 - **Improved Chapter Preservation:** Refined logic to ensure chapter titles and markers remain intact during the remuxing process.
