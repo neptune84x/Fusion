@@ -234,24 +234,34 @@ class ConversionThread(QThread):
 
         # ── MKV modu — 2 AŞAMALI STRATEJİ ───────────────────
         else:
-            # 1. Chapter ve Global Metadata Çıkar (Kaynaktan temiz dosya olarak)
+            # 1. Chapter ve Global Metadata Çıkar
             meta_f = os.path.join(tmp, "meta.txt")
             self.run_ff(ffmpeg, '-y', '-i', self.input_file, '-f', 'ffmetadata', meta_f)
 
             # 2. Fontları (Attachment) Fiziksel Olarak Dışarı Aktar
             font_list = []
             if has_ass and not convert_srt:
+                attachment_idx = 0
                 for s in streams:
                     if s.get('codec_type') == 'attachment':
                         tags = s.get('tags', {})
+                        # Orijinal dosya adını al veya fallback üret
                         fname = tags.get('filename') or f"font_{s['index']}.ttf"
                         mtype = tags.get('mimetype', 'application/x-truetype-font')
                         fpath = os.path.join(tmp, fname)
-                        self.run_ff(ffmpeg, '-y', '-dump_attachment:t', str(s['index']), '-i', self.input_file, fpath)
+                        
+                        # KRİTİK: FFmpeg -dump_attachment komutu attachment indexi (t:idx) kullanır.
+                        # Bu komut bir output dosyası değil, yan işlem olarak çalışır.
+                        self.run_ff(ffmpeg, '-y', '-i', self.input_file, 
+                                    '-dump_attachment:t:' + str(attachment_idx), fpath, 
+                                    '-f', 'null', '-')
+                        
                         if os.path.exists(fpath):
                             font_list.append({'path': fpath, 'mimetype': mtype, 'filename': fname})
+                        
+                        attachment_idx += 1
 
-            # AŞAMA 1: Video + Ses + Temiz Altyazılar -> Geçici MKV (Diller burada atanır)
+            # AŞAMA 1: Video + Ses + Temiz Altyazılar -> Geçici MKV
             tmp_mkv = os.path.join(tmp, "stage1.mkv")
             cmd1 = [ffmpeg, '-y', '-i', self.input_file]
             for c in cleaned: cmd1.extend(['-i', c['path']])
@@ -261,21 +271,23 @@ class ConversionThread(QThread):
                 cmd1.extend(['-map', f'{i+1}:0'])
                 codec = 'copy' if c['codec'] == 'ass' else 'subrip'
                 cmd1.extend([f'-c:s:{i}', codec])
-                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"]) # Diller burada korunuyor
+                cmd1.extend([f'-metadata:s:s:{i}', f"language={c['lang']}"])
 
             cmd1.extend(['-c:v', 'copy', '-c:a', 'copy'])
-            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1']) # Globali temizle
+            cmd1.extend(['-map_metadata', '-1', '-map_chapters', '-1'])
             cmd1.append(tmp_mkv)
             subprocess.run(cmd1, capture_output=True)
 
             # AŞAMA 2: Geçici MKV + Meta Dosyası + Fontlar -> Final MKV
             cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', meta_f]
-            cmd2.extend(['-map', '0', '-c', 'copy']) # Stage 1'deki streamleri ve dillerini al
-            cmd2.extend(['-map_metadata', '1'])      # Meta dosyasından global etiketleri al
-            cmd2.extend(['-map_chapters', '1'])      # Meta dosyasından chapter isimlerini al
+            cmd2.extend(['-map', '0', '-c', 'copy'])
+            cmd2.extend(['-map_metadata', '1'])
+            cmd2.extend(['-map_chapters', '1'])
             
+            # Fiziksel fontları tekrar ekle
             for idx, f in enumerate(font_list):
                 cmd2.extend(['-attach', f['path']])
+                # Metadata taglerini attachment streamine (t) uygula
                 cmd2.extend([f'-metadata:s:t:{idx}', f'mimetype={f["mimetype"]}'])
                 cmd2.extend([f'-metadata:s:t:{idx}', f'filename={f["filename"]}'])
 
@@ -564,7 +576,7 @@ class MainWindow(QMainWindow):
         if self._settings.isVisible(): self._settings.hide(); return
         self._settings.sync(self.prefs); btn=self.btn_settings; gp=btn.mapToGlobal(QPoint(btn.width()//2,btn.height()+2)); sw=max(self._settings.sizeHint().width(),280); gp.setX(gp.x()-sw//2); self._settings.move(gp); self._settings.show(); self._settings.raise_(); self._settings.activateWindow()
 
-    def mousePressEvent(self,e):
+    def mousePressEvent(self, e):
         if self._settings and self._settings.isVisible(): self._settings.hide()
         super().mousePressEvent(e)
 
