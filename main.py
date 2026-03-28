@@ -296,17 +296,21 @@ class ConversionThread(QThread):
             # Girdi 1 = kaynak      (chapter bilgisi için)
             cmd2 = [ffmpeg, '-y', '-i', tmp_mkv, '-i', self.input_file]
 
-            # stage1'deki tüm stream'leri al (dil kodları korunur)
+            # stage1'deki tüm stream'leri al (dil kodları stream-level metadata olarak korunur)
             cmd2.extend(['-map', '0'])
             # Codec: hepsini kopyala
             cmd2.extend(['-c', 'copy'])
-            # Global metadata temizle, chapter'ları kaynaktan al
-            cmd2.extend(['-map_metadata', '-1'])
-            cmd2.extend(['-map_chapters', '1'])   # input 1 = kaynak = chapter sahibi
 
-            # Fontları tek tek -attach ile ekle
-            # -attach bir OUTPUT seçeneğidir, doğru yerde kullanılıyor
-            # Attachment stream sayısı = map 0'daki stream sayısı sonrası başlar
+            # KRITIK:
+            #   -map_metadata:g -1  → sadece GLOBAL metadata'yı temizle (title, encoder vs.)
+            #                         stream-level metadata'ya (dil kodları) DOKUNMAZ
+            #   -map_metadata -1    → HER ŞEYİ siler (global + stream + chapter) — YANLIŞ
+            cmd2.extend(['-map_metadata:g', '-1'])
+
+            # Chapter'ları kaynak dosyadan al (input 1)
+            cmd2.extend(['-map_chapters', '1'])
+
+            # Fontları tek tek -attach ile ekle (-attach bir output seçeneğidir)
             for idx, font in enumerate(font_list):
                 cmd2.extend(['-attach', font['path']])
                 cmd2.extend([f'-metadata:s:t:{idx}', f"mimetype={font['mimetype']}"])
