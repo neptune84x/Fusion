@@ -393,7 +393,7 @@ extension MainWindowController: NSTableViewDataSource, NSTableViewDelegate {
 // MARK: - Zebra table view (custom background)
 
 final class FusionTableView: NSTableView {
-    override func drawBackground(in clipRect: NSRect) {
+    override func drawBackground(inClipRect clipRect: NSRect) {
         // Painted per-row in FusionRowView
     }
 }
@@ -558,3 +558,4 @@ final class SettingsFloatingPanel: NSPanel {
         prefs.loadExternalSubs = sender.state == .on
     }
 }
+```[cite: 2]
