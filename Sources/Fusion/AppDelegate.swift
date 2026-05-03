@@ -1,11 +1,12 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var mainWindowController: MainWindowController?
+
+    private var windowController: MainWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        mainWindowController = MainWindowController()
-        mainWindowController?.showWindow(nil)
+        windowController = MainWindowController()
+        windowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
