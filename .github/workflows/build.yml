@@ -1,4 +1,4 @@
-name: Build Fusion Mac (Universal Swift)
+name: Build Fusion Swift (Universal)
 
 on: [push, workflow_dispatch]
 
@@ -9,30 +9,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Universal Multimedia Tools from Fusion-Box
+      - name: Download Universal Multimedia Tools
         run: |
           set -euo pipefail
           mkdir -p tools
           BASE="https://github.com/neptune84x/Fusion-Box/releases/download/latest"
 
-          curl -fsSL "$BASE/ffmpeg-universal-macos.zip" -o /tmp/ffmpeg.zip
-          unzip -oq /tmp/ffmpeg.zip -d /tmp/ffmpeg_dir
-          cp /tmp/ffmpeg_dir/ffmpeg tools/ffmpeg
+          curl -fsSL "$BASE/ffmpeg-universal-macos.zip"  -o /tmp/ffmpeg.zip
+          unzip -oq /tmp/ffmpeg.zip  -d /tmp/ffmpeg_dir
+          cp /tmp/ffmpeg_dir/ffmpeg   tools/ffmpeg
 
           curl -fsSL "$BASE/ffprobe-universal-macos.zip" -o /tmp/ffprobe.zip
           unzip -oq /tmp/ffprobe.zip -d /tmp/ffprobe_dir
-          cp /tmp/ffprobe_dir/ffprobe tools/ffprobe
+          cp /tmp/ffprobe_dir/ffprobe  tools/ffprobe
 
-          curl -fsSL "$BASE/MP4Box-universal-macos.zip" -o /tmp/mp4box.zip
-          unzip -oq /tmp/mp4box.zip -d /tmp/mp4box_dir
-          cp /tmp/mp4box_dir/MP4Box tools/mp4box
+          curl -fsSL "$BASE/MP4Box-universal-macos.zip"  -o /tmp/mp4box.zip
+          unzip -oq /tmp/mp4box.zip  -d /tmp/mp4box_dir
+          cp /tmp/mp4box_dir/MP4Box   tools/mp4box
 
           chmod +x tools/ffmpeg tools/ffprobe tools/mp4box
+          file tools/ffmpeg tools/ffprobe tools/mp4box
+          echo "ffmpeg  archs: $(lipo -archs tools/ffmpeg)"
+          echo "ffprobe archs: $(lipo -archs tools/ffprobe)"
+          echo "mp4box  archs: $(lipo -archs tools/mp4box)"
 
-      - name: Create ICNS Icon
+      - name: Build Swift App (Universal Binary)
         run: |
-          mkdir -p Fusion.iconset
-          if [ -f "Fusion.png" ]; then
+          set -euo pipefail
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+          lipo -create \
+            .build/arm64-apple-macosx/release/Fusion \
+            .build/x86_64-apple-macosx/release/Fusion \
+            -output .build/Fusion-universal
+          echo "Universal archs: $(lipo -archs .build/Fusion-universal)"
+
+      - name: Package as .app Bundle
+        run: |
+          set -euo pipefail
+          APP="Fusion.app"
+          MACOS="$APP/Contents/MacOS"
+          RES="$APP/Contents/Resources"
+          mkdir -p "$MACOS" "$RES"
+
+          cp .build/Fusion-universal "$MACOS/Fusion"
+          cp Info.plist "$APP/Contents/Info.plist"
+          cp tools/ffmpeg  "$RES/ffmpeg"
+          cp tools/ffprobe "$RES/ffprobe"
+          cp tools/mp4box  "$RES/mp4box"
+          chmod +x "$RES/ffmpeg" "$RES/ffprobe" "$RES/mp4box"
+
+          if [ -f "Fusion.icns" ]; then
+            cp Fusion.icns "$RES/Fusion.icns"
+          elif [ -f "Fusion.png" ]; then
+            mkdir -p Fusion.iconset
             sips -z 1024 1024 Fusion.png --out Fusion.iconset/icon_512x512@2x.png
             sips -z 512  512  Fusion.png --out Fusion.iconset/icon_512x512.png
             sips -z 256  256  Fusion.png --out Fusion.iconset/icon_256x256.png
@@ -41,47 +71,16 @@ jobs:
             sips -z 32   32   Fusion.png --out Fusion.iconset/icon_32x32.png
             sips -z 16   16   Fusion.png --out Fusion.iconset/icon_16x16.png
             iconutil -c icns Fusion.iconset
+            cp Fusion.icns "$RES/Fusion.icns"
           fi
 
-      - name: Build Swift Application (Universal)
-        run: |
-          # Hem Intel hem Apple Silicon için derliyoruz
-          swift build -c release --arch arm64 --arch x86_64
+          find "$APP" -type f | sort
 
-      - name: Construct Application Bundle
-        run: |
-          APP_DIR="dist/Fusion.app"
-          mkdir -p "$APP_DIR/Contents/MacOS"
-          mkdir -p "$APP_DIR/Contents/Resources"
+      - name: Create ZIP
+        run: zip -y -r Fusion_v0.3.0_Universal.zip Fusion.app
 
-          # 1. Derlenen Binary'i taşı
-          cp .build/apple/Products/Release/Fusion "$APP_DIR/Contents/MacOS/"
-
-          # 2. Info.plist dosyasını taşı
-          cp Info.plist "$APP_DIR/Contents/"
-
-          # 3. İkonu taşı
-          [ -f "Fusion.icns" ] && cp Fusion.icns "$APP_DIR/Contents/Resources/" || true
-
-          # 4. Binary araçları (ffmpeg, mp4box) uygulamanın içine göm
-          cp tools/ffmpeg "$APP_DIR/Contents/Resources/"
-          cp tools/ffprobe "$APP_DIR/Contents/Resources/"
-          cp tools/mp4box "$APP_DIR/Contents/Resources/"
-
-          # Yetkileri ver
-          chmod +x "$APP_DIR/Contents/MacOS/Fusion"
-          chmod +x "$APP_DIR/Contents/Resources/"*
-
-      - name: Sign Application (Ad-Hoc)
-        run: codesign --force --deep --sign - "dist/Fusion.app"
-
-      - name: Package as ZIP
-        run: |
-          cd dist
-          zip -y -r ../Fusion_v0.4.0_Swift_Universal.zip Fusion.app
-
-      - name: Upload Build Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fusion-Swift-App
-          path: Fusion_v0.4.0_Swift_Universal.zip
+          name: Fusion-Swift-Universal
+          path: Fusion_v0.3.0_Universal.zip
